@@ -1,0 +1,10 @@
+services:
+  bot:
+    build:
+      context: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro

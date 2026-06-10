@@ -1,0 +1,14 @@
+.git
+.github
+.pytest_cache
+.venv
+.venv_py39_backup
+__pycache__
+*.pyc
+*.pyo
+.DS_Store
+.env
+data
+secrets
+alembic/versions/__pycache__
+tests/__pycache__
