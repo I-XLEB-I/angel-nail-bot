@@ -36,17 +36,30 @@ class Settings(BaseSettings):
         default=Path("./secrets/gcal_service_account.json"),
         alias="GCAL_CREDENTIALS_PATH",
     )
+    gcal_credentials_json: str = Field(default="", alias="GCAL_CREDENTIALS_JSON")
     google_service_account_path: Path = Field(
         default=Path("./secrets/google_service_account.json"),
         alias="GOOGLE_SERVICE_ACCOUNT_PATH",
+    )
+    google_service_account_json: str = Field(
+        default="",
+        alias="GOOGLE_SERVICE_ACCOUNT_JSON",
     )
     google_oauth_client_path: Path = Field(
         default=Path("./secrets/google_oauth_client.json"),
         alias="GOOGLE_OAUTH_CLIENT_PATH",
     )
+    google_oauth_client_json: str = Field(
+        default="",
+        alias="GOOGLE_OAUTH_CLIENT_JSON",
+    )
     google_oauth_token_path: Path = Field(
         default=Path("./secrets/google_oauth_token.json"),
         alias="GOOGLE_OAUTH_TOKEN_PATH",
+    )
+    google_oauth_token_json: str = Field(
+        default="",
+        alias="GOOGLE_OAUTH_TOKEN_JSON",
     )
     gsheets_spreadsheet_id: str = Field(default="", alias="GSHEETS_SPREADSHEET_ID")
     gdrive_folder_id: str = Field(default="", alias="GDRIVE_FOLDER_ID")
