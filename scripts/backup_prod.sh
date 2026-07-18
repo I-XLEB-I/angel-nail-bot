@@ -9,6 +9,9 @@ TS="$(date -u +%Y-%m-%dT%H%M%SZ)"
 
 cp data/bot.db "backups/bot.db.${TS}"
 cp .env "backups/.env.${TS}"
+if [[ -d data/template_media ]]; then
+  tar -czf "backups/template_media.${TS}.tar.gz" -C data template_media
+fi
 
 python3 - "$ROOT_DIR/data/bot.db" "$TS" <<'PY'
 import sqlite3
@@ -33,3 +36,6 @@ PY
 echo "Backup created:"
 echo "  backups/bot.db.${TS}"
 echo "  backups/.env.${TS}"
+if [[ -f "backups/template_media.${TS}.tar.gz" ]]; then
+  echo "  backups/template_media.${TS}.tar.gz"
+fi

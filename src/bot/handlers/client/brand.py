@@ -36,13 +36,15 @@ async def send_brand_message(
     fallback_kind: str = "client_card",
     parse_mode=None,
 ) -> None:
-    """Send a shared brand image, falling back to plain text when no static media exists."""
-    resolved_image_path = BRAND_IMAGE_PATH
+    """Send configured media, or plain text when a named template has no image."""
+    resolved_image_path: Path | None = None
     if template_key and has_template_media(template_key):
         resolved_image_path = template_media_path(template_key)
     elif image_path is not None:
         resolved_image_path = image_path
-    image_bytes = load_image_bytes(resolved_image_path)
+    elif template_key is None:
+        resolved_image_path = BRAND_IMAGE_PATH
+    image_bytes = load_image_bytes(resolved_image_path) if resolved_image_path else None
     if image_bytes is not None:
         if replace_current:
             await replace_inline_message_panel(
@@ -156,13 +158,15 @@ async def send_brand_bot_message(
     image_path: Path | None = None,
     parse_mode=None,
 ) -> None:
-    """Send a brand image in proactive bot messages, falling back to plain text."""
-    resolved_image_path = BRAND_IMAGE_PATH
+    """Send configured media proactively, or text for an image-less template."""
+    resolved_image_path: Path | None = None
     if template_key and has_template_media(template_key):
         resolved_image_path = template_media_path(template_key)
     elif image_path is not None:
         resolved_image_path = image_path
-    image_bytes = load_image_bytes(resolved_image_path)
+    elif template_key is None:
+        resolved_image_path = BRAND_IMAGE_PATH
+    image_bytes = load_image_bytes(resolved_image_path) if resolved_image_path else None
     send_photo = getattr(bot, "send_photo", None)
     if image_bytes is not None and send_photo is not None:
         try:

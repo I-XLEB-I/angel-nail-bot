@@ -50,7 +50,10 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="booking_confirm",
         title="✅ Подтверждение записи",
-        description="Сразу после записи клиентки",
+        description=(
+            "Сразу после записи клиентки; картинка статичная, поэтому адрес "
+            "на ней меняется отдельно"
+        ),
         category_key="clients",
         default_content=texts.DEFAULT_BOOKING_CONFIRM_TEMPLATE,
         variables=("name", "date", "time", "service", "payment", "address", "address_block"),
@@ -215,7 +218,9 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="navigation_public",
         title="📍 Адрес (публичный)",
-        description="Показывается до записи: безопасная публичная версия раздела «Адрес и как добраться»",
+        description=(
+            "Показывается до записи: отдельный экран с публичным текстом и картинкой"
+        ),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE,
         variables=(),
@@ -223,12 +228,14 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     ),
     TemplateDefinition(
         key="address_post_confirm",
-        title="📍 Адрес + навигация",
-        description="Показывается только после подтверждения записи: полный адрес, ориентиры, код и этаж",
+        title="🔐 Полный адрес после записи",
+        description=(
+            "Текст полного адреса для подтверждения и напоминания; картинка "
+            "редактируется в шаблоне «Подтверждение записи»"
+        ),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_POST_CONFIRM,
         variables=(),
-        supports_media=True,
     ),
     TemplateDefinition(
         key="schedule_caption_text",
@@ -241,7 +248,10 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="price",
         title="💰 Прайс",
-        description="Раздел «Услуги и цены» с текстом и картинкой",
+        description=(
+            "Раздел «Услуги и цены» с текстом и картинкой; картинка статичная "
+            "и не меняется автоматически вместе с ценами услуг"
+        ),
         category_key="clients",
         default_content=texts.DEFAULT_PRICE_TEMPLATE,
         variables=(),
@@ -250,7 +260,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="greeting_header",
         title="Приветствие",
-        description="Главная страница бота",
+        description="Текст главной страницы; общий фирменный фон меняется отдельно",
         category_key="other",
         default_content=texts.MENU_HEADER,
         variables=(),
@@ -284,11 +294,10 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="portfolio_intro",
         title="Портфолио",
-        description="Раздел «Портфолио работ»",
+        description="Текст на объединённом экране «О Ангеле»; картинка задаётся соседним шаблоном",
         category_key="other",
         default_content=texts.PORTFOLIO_INTRO,
         variables=(),
-        supports_media=True,
     ),
     TemplateDefinition(
         key="about_master",

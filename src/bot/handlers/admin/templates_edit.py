@@ -49,10 +49,13 @@ from src.services.admin_defaults import (
     required_template_defaults,
 )
 from src.services.template_media import (
+    has_bundled_template_media,
     has_template_media,
     remove_template_media,
+    restore_bundled_template_media,
     save_template_media,
     template_media_path,
+    template_media_source,
 )
 
 router = Router(name="admin_templates_edit")
@@ -73,9 +76,9 @@ HIDDEN_TEMPLATE_KEYS = frozenset({"rules", "navigation"})
 
 TEMPLATE_CATEGORY_SUMMARIES: dict[str, str] = {
     "clients": "Сообщения клиентке на разных этапах: запись, напоминания, aftercare и исключения 🌸",
-    "address": "Навигация, адрес и то, что клиентка видит до и после подтверждения записи.",
+    "address": "Публичный адрес до записи и полный адрес после подтверждения.",
     "schedule": "Короткие подписи и витринные тексты для расписания.",
-    "other": "Главная, правила, портфолио, отпуск и прочие служебные экраны.",
+    "other": "Главная, портфолио, отпуск и прочие служебные экраны.",
 }
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +96,14 @@ TEMPLATE_GROUPS_BY_CATEGORY: dict[str, tuple[TemplateGroup, ...]] = {
         TemplateGroup(
             key="booking",
             title="🌿 Запись",
-            summary="Подтверждение записи, прайс и мягкие отказы по записи.",
-            template_keys=("booking_confirm", "price", "decline_repeat_booking_reason"),
+            summary="Подтверждение записи и мягкие отказы по записи.",
+            template_keys=("booking_confirm", "decline_repeat_booking_reason"),
+        ),
+        TemplateGroup(
+            key="price",
+            title="💰 Прайс",
+            summary="Текст и картинка клиентского раздела «Услуги и цены».",
+            template_keys=("price",),
         ),
         TemplateGroup(
             key="reminders",
@@ -152,7 +161,7 @@ TEMPLATE_GROUPS_BY_CATEGORY: dict[str, tuple[TemplateGroup, ...]] = {
         TemplateGroup(
             key="navigation",
             title="📍 Адрес и навигация",
-            summary="Публичный адрес, адрес после записи и полная навигация.",
+            summary="Публичная версия до записи и полный адрес после подтверждения.",
             template_keys=("navigation_public", "navigation", "address_post_confirm"),
         ),
     ),
@@ -173,8 +182,8 @@ TEMPLATE_GROUPS_BY_CATEGORY: dict[str, tuple[TemplateGroup, ...]] = {
         ),
         TemplateGroup(
             key="rules_vacation",
-            title="📌 Правила и отпуск",
-            summary="Общие правила визита и отпускной режим.",
+            title="🌴 Отпуск",
+            summary="Текст, который клиентки видят во время отпускного режима.",
             template_keys=("rules", "vacation_notice"),
         ),
         TemplateGroup(
@@ -210,8 +219,13 @@ def build_template_image_block(template_key: str) -> str:
     definition = get_template_definition(template_key)
     if definition is None or not definition.supports_media:
         return "🖼 Картинка: не используется"
-    if has_template_media(template_key):
-        return "🖼 Картинка: прикреплена"
+    source = template_media_source(template_key)
+    if source == "uploaded":
+        return "🖼 Картинка: своя, загружена через админку"
+    if source == "bundled":
+        return "🖼 Картинка: стандартная, уже показывается клиенткам"
+    if has_bundled_template_media(template_key):
+        return "🖼 Картинка: отключена · стандартную можно вернуть"
     return "🖼 Картинка: можно добавить"
 
 
@@ -425,7 +439,7 @@ def build_templates_home_text() -> str:
     lines = [
         "📝 ШАБЛОНЫ",
         "",
-        "Здесь собраны все тексты и картинки, которые можно менять через бота.",
+        "Здесь собраны основные тексты и картинки, которые можно менять через бота.",
         "Сначала выбери раздел 👇",
         "",
     ]
@@ -536,6 +550,8 @@ async def build_template_detail_text(
         resolve_template_detail_back_callback(definition.key),
         supports_media=definition.supports_media,
         has_media=has_template_media(definition.key),
+        has_bundled_media=has_bundled_template_media(definition.key),
+        uses_bundled_media=template_media_source(definition.key) == "bundled",
     )
     return text, reply_markup
 
@@ -1235,6 +1251,33 @@ async def remove_template_image_callback(
     await callback.answer()
     template_key = callback.data.rsplit(":", 1)[-1]
     remove_template_media(template_key)
+    if callback.message is not None:
+        await show_template_detail(
+            callback.message,
+            db_session=db_session,
+            template_key=template_key,
+            edit=True,
+            state=state,
+        )
+
+
+@router.callback_query(F.data.startswith("admin_templates:restore_image:"))
+async def restore_template_image_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    is_admin: bool,
+    db_session: AsyncSession,
+) -> None:
+    """Restore the bundled image after a custom override or deletion."""
+    if not is_admin:
+        await callback.answer(texts.ADMIN_ONLY_TEXT, show_alert=True)
+        return
+    template_key = callback.data.rsplit(":", 1)[-1]
+    if not restore_bundled_template_media(template_key):
+        await callback.answer(texts.ADMIN_TEMPLATE_IMAGE_MISSING_ALERT_TEXT, show_alert=True)
+        return
+    await callback.answer("Стандартная картинка возвращена")
     if callback.message is not None:
         await show_template_detail(
             callback.message,

@@ -206,11 +206,12 @@ async def test_show_portfolio_replaces_current_message_in_place() -> None:
         )
 
         assert callback.answered is True
-        assert callback.message.media_edits
-        assert callback.message.media_edits[0]["caption"] == (
+        assert callback.message.edits
+        assert callback.message.edits[0][0] == (
             "Ангела делает аккуратный маникюр\n\nПортфолио здесь"
         )
-        assert callback.message.media_edits[0]["reply_markup"] is not None
+        assert callback.message.edits[0][1] is not None
+        assert callback.message.media_edits == []
         assert callback.message.answers == []
         assert callback.message.deleted == 0
 

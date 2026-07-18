@@ -61,6 +61,22 @@ def first_rendered_markup(message: FakeMessage):
     return None
 
 
+def test_template_image_block_distinguishes_bundled_and_uploaded(monkeypatch) -> None:
+    monkeypatch.setattr(
+        templates_handler,
+        "template_media_source",
+        lambda key: "bundled" if key == "navigation_public" else "uploaded",
+    )
+    monkeypatch.setattr(templates_handler, "has_bundled_template_media", lambda key: True)
+
+    assert "стандартная" in templates_handler.build_template_image_block(
+        "navigation_public"
+    )
+    assert "загружена через админку" in templates_handler.build_template_image_block(
+        "price"
+    )
+
+
 class FakeCallback:
     def __init__(self, data: str, message: FakeMessage | None = None) -> None:
         self.data = data
@@ -136,6 +152,7 @@ async def test_open_template_category_edits_current_message() -> None:
         markup = first_rendered_markup(callback.message)
         assert markup is not None
         labels = [button.text for row in markup.inline_keyboard for button in row]
+        assert "💰 Прайс" in labels
         assert "🛠 Ремонт и гарантия" in labels
         assert "🛠 Ремонт / гарантия — интро" not in labels
 
@@ -173,6 +190,40 @@ async def test_open_template_group_shows_only_group_templates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_price_group_opens_editable_text_and_image_card() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        callback = FakeCallback("admin_templates:group:clients:price")
+        state = FakeState()
+
+        await templates_handler.open_template_group_callback(
+            callback,
+            state,
+            is_admin=True,
+            db_session=session,
+        )
+
+        assert callback.answered is True
+        rendered_text = first_rendered_text(callback.message)
+        if rendered_text is None and callback.message.photos:
+            rendered_text = callback.message.photos[0][1]
+        assert "💰 Прайс" in (rendered_text or "")
+        markup = first_rendered_markup(callback.message)
+        if markup is None and callback.message.photos:
+            markup = callback.message.photos[0][2]
+        labels = [button.text for row in markup.inline_keyboard for button in row]
+        assert "✏️ Изменить текст" in labels
+        assert "🖼 Заменить картинку" in labels
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_open_single_group_category_skips_transition_screen() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -197,7 +248,7 @@ async def test_open_single_group_category_skips_transition_screen() -> None:
         assert markup is not None
         labels = [button.text for row in markup.inline_keyboard for button in row]
         assert "📍 Адрес (публичный)" in labels
-        assert "📍 Адрес (после записи)" not in labels
+        assert "🔐 Полный адрес после записи" in labels
         assert markup.inline_keyboard[-2][0].callback_data == "admin_templates:home"
 
     await engine.dispose()
@@ -658,7 +709,7 @@ async def test_save_template_image_content_accepts_image_document_by_extension(
     await state.update_data(
         admin_template_key="price",
         admin_template_category="clients",
-        admin_template_group="booking",
+        admin_template_group="price",
     )
 
     await templates_handler.save_template_image_content(
@@ -668,7 +719,7 @@ async def test_save_template_image_content_accepts_image_document_by_extension(
     )
 
     assert saved == [("price", b"fake-bytes")]
-    assert calls == ["clients:booking"]
+    assert calls == ["clients:price"]
     assert state.cleared is True
 
 

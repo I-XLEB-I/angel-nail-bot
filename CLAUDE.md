@@ -82,19 +82,19 @@ All Google integrations (Calendar, Sheets, Drive) are optional and guarded by fe
 
 ### Image generation
 
-`src/services/image_core.py`, `schedule_image.py`, and `price_image.py` use Pillow to render schedule/price/client-card images. Backgrounds are stored in `assets/` and can be overridden at runtime via admin panel (stored in the DB).
+`src/services/image_core.py`, `schedule_image.py`, and `price_image.py` use Pillow to render schedule/price/client-card images. Bundled defaults live in `assets/`. Images uploaded for editable message templates live in `data/template_media/`, with bundled `assets/template_media/` files used only as defaults.
 
 ### Database
 
-Default: `sqlite+aiosqlite:///./data/bot.db`. Production runtime data (admin-configured templates, button styles, premium emoji, services) lives in this file — **never overwrite `data/` during deploy**. The `entrypoint.sh` runs `alembic upgrade head` automatically on container start.
+Default: `sqlite+aiosqlite:///./data/bot.db`. Production runtime data lives under `data/`: database-backed settings in `bot.db`, FSM state in `fsm_states.json`, and admin-uploaded template images in `template_media/`. **Never overwrite `data/` during deploy.** The `entrypoint.sh` runs `alembic upgrade head` automatically on container start.
 
 ### SQLite deploy safety
 
-- Before any prod deploy or migration, create a fresh backup of both `data/bot.db` and `.env`.
+- Before any prod deploy or migration, create a fresh backup of `data/bot.db`, `.env`, and `data/template_media/` when present.
 - Do **not** use `rsync --delete` against `data/` or `backups/`.
 - For prod backup/restore, prefer:
   - `scripts/backup_prod.sh`
-  - `scripts/restore_prod.sh <db-backup> [env-backup]`
+  - `scripts/restore_prod.sh <db-backup> [env-backup] [template-media-backup]`
 - After any restore or migration, run a smoke check:
   - bot starts and polls successfully;
   - `alembic upgrade head` is clean;

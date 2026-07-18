@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: scripts/restore_prod.sh <db-backup-path> [env-backup-path]" >&2
+  echo "Usage: scripts/restore_prod.sh <db-backup-path> [env-backup-path] [media-backup-path]" >&2
   exit 1
 fi
 
@@ -11,6 +11,7 @@ cd "$ROOT_DIR"
 
 DB_BACKUP="$1"
 ENV_BACKUP="${2:-}"
+MEDIA_BACKUP="${3:-}"
 TS="$(date -u +%Y-%m-%dT%H%M%SZ)"
 
 docker compose -f docker-compose.prod.yml stop bot
@@ -18,6 +19,10 @@ docker compose -f docker-compose.prod.yml stop bot
 cp "$DB_BACKUP" data/bot.db
 if [[ -n "$ENV_BACKUP" ]]; then
   cp "$ENV_BACKUP" .env
+fi
+if [[ -n "$MEDIA_BACKUP" ]]; then
+  rm -rf data/template_media
+  tar -xzf "$MEDIA_BACKUP" -C data
 fi
 
 python3 - "$ROOT_DIR/data/bot.db" "$TS" <<'PY'

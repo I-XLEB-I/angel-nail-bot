@@ -2250,6 +2250,8 @@ def build_admin_template_detail_keyboard(
     *,
     supports_media: bool = False,
     has_media: bool = False,
+    has_bundled_media: bool = False,
+    uses_bundled_media: bool = False,
 ) -> InlineKeyboardMarkup:
     """Build actions below one template detail view."""
     rows = [
@@ -2277,6 +2279,15 @@ def build_admin_template_detail_keyboard(
                         text="🗑 Удалить картинку",
                         callback_data=f"admin_templates:remove_image:{template_key}",
                         style=ButtonStyle.DANGER,
+                    )
+                ]
+            )
+        if has_bundled_media and not uses_bundled_media:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="↩️ Вернуть стандартную картинку",
+                        callback_data=f"admin_templates:restore_image:{template_key}",
                     )
                 ]
             )

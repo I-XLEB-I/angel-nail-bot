@@ -639,6 +639,8 @@ def test_templates_keyboards_include_back_and_home_navigation() -> None:
         "admin_templates:group:clients:booking",
         supports_media=True,
         has_media=True,
+        has_bundled_media=True,
+        uses_bundled_media=False,
     )
 
     assert home_keyboard.inline_keyboard[-1][0].callback_data == "admin_menu:home"
@@ -656,6 +658,7 @@ def test_templates_keyboards_include_back_and_home_navigation() -> None:
         for button in row
     ]
     assert "admin_templates:preview_image:booking_confirm" not in media_callbacks
+    assert "admin_templates:restore_image:booking_confirm" in media_callbacks
 
 
 def test_schedule_image_reset_uses_danger_style() -> None:
