@@ -10,6 +10,7 @@ from src.db.repositories.settings import SettingRepository
 from src.services.button_configs import (
     DEFAULT_ADDRESS_MAP_URL,
     LEGACY_DEFAULT_ADDRESS_MAP_URL,
+    PREVIOUS_DEFAULT_ADDRESS_MAP_URL,
     build_angela_chat_url,
     load_button_config,
     load_master_contact_url,
@@ -89,6 +90,35 @@ async def test_legacy_default_map_url_moves_to_current_address() -> None:
         )
 
         assert config.url == DEFAULT_ADDRESS_MAP_URL
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_previous_default_map_url_moves_to_new_short_link() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        repository = SettingRepository(session)
+        await repository.upsert(
+            key="button_config.client_repeated.open_map",
+            value=(
+                '{"text":"Открыть карту","style_name":"primary",'
+                f'"url":"{PREVIOUS_DEFAULT_ADDRESS_MAP_URL}"}}'
+            ),
+        )
+        await session.commit()
+
+        config = await load_button_config(
+            repository,
+            editor_id="client_repeated.open_map",
+        )
+
+        assert config.url == "https://yandex.ru/maps/-/CTRpjUkQ"
 
     await engine.dispose()
 
