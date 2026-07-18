@@ -12,6 +12,7 @@ MASTER_TELEGRAM_USERNAME_SETTING_KEY = "master_telegram_username"
 DEFAULT_MASTER_TELEGRAM_USERNAME = "ny_pip"
 ANGELA_CHAT_DEFAULT_TEXT = "Здравствуйте, хочу уточнить по поводу записи на Маникюр 🌸"
 PORTFOLIO_CUSTOM_EMOJI_ID = "5370607250731718891"
+DEFAULT_PORTFOLIO_CHANNEL_URL = "https://t.me/angelsnailspace"
 LEGACY_DEFAULT_ADDRESS_MAP_URL = (
     "https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/"
     "Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&ll=37.461811%2C55.694677&z=17.96"
@@ -164,7 +165,7 @@ EDITABLE_BUTTON_DEFINITIONS: tuple[EditableButtonDefinition, ...] = (
         default_text="🌸 О Ангеле и работы",
         default_style_name=BUTTON_STYLE_DEFAULT,
         default_icon_custom_emoji_id=PORTFOLIO_CUSTOM_EMOJI_ID,
-        callback_data="client_menu:portfolio",
+        url=DEFAULT_PORTFOLIO_CHANNEL_URL,
     ),
     EditableButtonDefinition(
         key="address",

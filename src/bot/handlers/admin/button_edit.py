@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from html import escape
 import re
+from html import escape
 from urllib.parse import urlparse
 
 from aiogram import F, Router
@@ -52,7 +52,7 @@ def _describe_button_destination(editor_id: str) -> str:
         "client_main_menu.my_bookings": "открывает раздел «Мои записи»",
         "client_main_menu.browse": "открывает свободные окошки",
         "client_main_menu.services": "открывает прайс и услуги",
-        "client_main_menu.portfolio": "открывает экран «О Ангеле и работы»",
+        "client_main_menu.portfolio": "открывает Telegram-канал с работами Ангелы",
         "client_main_menu.address": "открывает адрес и навигацию",
         "client_main_menu.contact": "открывает чат с Ангелой",
         "common.back": "возвращает на шаг назад",

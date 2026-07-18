@@ -48,7 +48,10 @@ from src.bot.keyboards.client import (
 from src.db.models import ApprovalRequestKind, Service, ServiceKind, Slot, SlotStatus
 from src.services.admin_defaults import list_template_categories, list_template_definitions
 from src.services.booking import DayOption
-from src.services.button_configs import ClientMenuButtonConfig
+from src.services.button_configs import (
+    DEFAULT_PORTFOLIO_CHANNEL_URL,
+    ClientMenuButtonConfig,
+)
 
 
 def test_client_main_menu_marks_booking_cta_as_success() -> None:
@@ -63,7 +66,10 @@ def test_client_main_menu_marks_booking_cta_as_success() -> None:
     assert keyboard.inline_keyboard[0][0].callback_data == "client_menu:book"
     assert keyboard.inline_keyboard[0][1].style == ButtonStyle.PRIMARY
     assert keyboard.inline_keyboard[1][0].style == ButtonStyle.PRIMARY
-    assert buttons["client_menu:portfolio"].icon_custom_emoji_id == PORTFOLIO_CUSTOM_EMOJI_ID
+    assert buttons[DEFAULT_PORTFOLIO_CHANNEL_URL].icon_custom_emoji_id == (
+        PORTFOLIO_CUSTOM_EMOJI_ID
+    )
+    assert buttons[DEFAULT_PORTFOLIO_CHANNEL_URL].callback_data is None
     assert "client_menu:about" not in buttons
     assert buttons[ANGELA_CHAT_URL].url == ANGELA_CHAT_URL
 
@@ -84,7 +90,7 @@ def test_client_main_menu_accepts_runtime_button_overrides() -> None:
         button
         for row in keyboard.inline_keyboard
         for button in row
-        if button.callback_data == "client_menu:portfolio"
+        if button.url == DEFAULT_PORTFOLIO_CHANNEL_URL
     )
 
     assert keyboard.inline_keyboard[0][0].text == "✨ Хочу записаться"
