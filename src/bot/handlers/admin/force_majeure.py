@@ -18,12 +18,14 @@ from src.bot.keyboards.admin import (
     build_force_majeure_confirm_keyboard,
     build_force_majeure_day_keyboard,
     build_force_majeure_final_keyboard,
+    build_force_majeure_reason_keyboard,
 )
 from src.bot.states import AdminForceMajeure
 from src.bot.ui_utils import replace_inline_message_text
 from src.config import Settings
 from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.settings import SettingRepository
+from src.db.repositories.templates import TemplateRepository
 from src.services.force_majeure import (
     apply_force_majeure_cancellation,
     build_force_majeure_notice,
@@ -114,6 +116,7 @@ async def force_majeure_day_chosen(
     state: FSMContext,
     *,
     is_admin: bool,
+    db_session: AsyncSession,
 ) -> None:
     """Store the chosen day and ask for the reason text."""
     if not is_admin:
@@ -124,9 +127,114 @@ async def force_majeure_day_chosen(
         return
 
     iso_date = callback.data.removeprefix("force_majeure:day:")
-    await state.update_data(force_majeure_date=iso_date)
+    default_reason = await TemplateRepository(db_session).get_content_or_default(
+        "force_majeure_notice",
+        texts.DEFAULT_FORCE_MAJEURE_TEMPLATE,
+    )
+    await state.update_data(
+        force_majeure_date=iso_date,
+        force_majeure_reason=default_reason,
+    )
     await state.set_state(AdminForceMajeure.input_reason)
-    await replace_inline_message_text(callback.message, texts.FORCE_MAJEURE_INPUT_REASON_TEXT)
+    await replace_inline_message_text(
+        callback.message,
+        (
+            f"{texts.FORCE_MAJEURE_INPUT_REASON_TEXT}\n\n"
+            f"Текущий шаблон:\n{default_reason}"
+        ),
+        reply_markup=build_force_majeure_reason_keyboard(iso_date),
+    )
+
+
+async def _show_force_majeure_review(
+    message: Message,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    settings: Settings,
+    iso_date: str,
+    reason: str,
+    replace_current: bool,
+) -> bool:
+    """Validate the selected day and render the first destructive-action review."""
+    settings_repository = SettingRepository(db_session)
+    tz_name = await get_runtime_tz(settings_repository, settings=settings)
+    try:
+        local_day = date.fromisoformat(iso_date)
+    except ValueError:
+        if replace_current:
+            await replace_inline_message_text(message, texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
+        else:
+            await message.answer(texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
+        return False
+
+    bookings = await BookingRepository(db_session).list_active_for_day(
+        local_day=local_day,
+        tz_name=tz_name,
+    )
+    if not bookings:
+        if replace_current:
+            await replace_inline_message_text(message, texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
+        else:
+            await message.answer(texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
+        await clear_state_preserving_admin_panel(state)
+        return False
+
+    await state.update_data(force_majeure_reason=reason)
+    await state.set_state(AdminForceMajeure.confirm)
+    review_text = texts.FORCE_MAJEURE_CONFIRM_TEXT.format(
+        count=len(bookings),
+        date=local_day.strftime("%d.%m.%Y"),
+        reason=reason,
+    )
+    reply_markup = build_force_majeure_confirm_keyboard(iso_date)
+    if replace_current:
+        await replace_inline_message_text(
+            message,
+            review_text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await message.answer(review_text, reply_markup=reply_markup)
+    return True
+
+
+@router.callback_query(
+    StateFilter(AdminForceMajeure.input_reason),
+    F.data.startswith("force_majeure:use_template:"),
+)
+async def force_majeure_use_template(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    is_admin: bool,
+    settings: Settings,
+) -> None:
+    """Use the admin-editable force-majeure template as the cancellation reason."""
+    if not is_admin:
+        await callback.answer()
+        return
+    await callback.answer()
+    if callback.data is None or callback.message is None:
+        return
+    data = await state.get_data()
+    reason = str(data.get("force_majeure_reason") or "").strip()
+    if not reason:
+        reason = await TemplateRepository(db_session).get_content_or_default(
+            "force_majeure_notice",
+            texts.DEFAULT_FORCE_MAJEURE_TEMPLATE,
+        )
+    iso_date = callback.data.removeprefix("force_majeure:use_template:")
+    await _show_force_majeure_review(
+        callback.message,
+        state,
+        db_session=db_session,
+        settings=settings,
+        iso_date=iso_date,
+        reason=reason,
+        replace_current=True,
+    )
 
 
 @router.message(StateFilter(AdminForceMajeure.input_reason), F.text)
@@ -149,31 +257,14 @@ async def force_majeure_reason_entered(
         await message.answer(texts.FORCE_MAJEURE_INPUT_REASON_TEXT)
         return
 
-    settings_repository = SettingRepository(db_session)
-    tz_name = await get_runtime_tz(settings_repository, settings=settings)
-    try:
-        local_day = date.fromisoformat(iso_date)
-    except ValueError:
-        await message.answer(texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
-        return
-
-    booking_repository = BookingRepository(db_session)
-    bookings = await booking_repository.list_active_for_day(local_day=local_day, tz_name=tz_name)
-    count = len(bookings)
-    if count == 0:
-        await message.answer(texts.FORCE_MAJEURE_NO_BOOKINGS_TEXT)
-        await clear_state_preserving_admin_panel(state)
-        return
-
-    await state.update_data(force_majeure_reason=reason)
-    await state.set_state(AdminForceMajeure.confirm)
-    await message.answer(
-        texts.FORCE_MAJEURE_CONFIRM_TEXT.format(
-            count=count,
-            date=local_day.strftime("%d.%m.%Y"),
-            reason=reason,
-        ),
-        reply_markup=build_force_majeure_confirm_keyboard(iso_date),
+    await _show_force_majeure_review(
+        message,
+        state,
+        db_session=db_session,
+        settings=settings,
+        iso_date=str(iso_date),
+        reason=reason,
+        replace_current=False,
     )
 
 

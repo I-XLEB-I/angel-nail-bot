@@ -7,7 +7,6 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.handlers.client.address import (
-    build_address_copy_text,
     build_address_map_url,
     build_address_text,
 )
@@ -17,11 +16,16 @@ from src.config import Settings
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.admin_defaults import required_template_defaults
-from src.services.booking import format_local_datetime, format_local_day_label, format_payment_method_label
+from src.services.booking import (
+    format_local_datetime,
+    format_local_day_label,
+    format_payment_method_label,
+)
 from src.services.booking_completion import BookingClientConfirmationPayload
 from src.services.button_configs import load_all_button_configs, load_master_contact_url
-from src.services.template_texts import ensure_late_policy_notice, render_template_text
+from src.services.studio_address import load_studio_address_copy_text
 from src.services.template_media import has_template_media
+from src.services.template_texts import ensure_late_policy_notice, render_template_text
 
 _LEGACY_BOOKING_CONFIRM_TEMPLATE = """<b>✅ Записала тебя 🌸</b>
 
@@ -96,7 +100,7 @@ async def _build_booking_confirmation_keyboard(
     return build_post_booking_cta_keyboard(
         booking_id,
         address_map_url=build_address_map_url(),
-        address_copy_text=build_address_copy_text(),
+        address_copy_text=await load_studio_address_copy_text(settings_repository),
         button_configs=button_configs,
         contact_url=contact_url,
     )

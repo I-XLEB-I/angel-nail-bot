@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from src.bot import texts
 from src.config import Settings
 from src.services.button_configs import DEFAULT_MASTER_TELEGRAM_USERNAME
+from src.services.studio_address import DEFAULT_STUDIO_ADDRESS_COPY_TEXT
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,7 @@ class TemplateDefinition:
     category_key: str
     default_content: str
     variables: tuple[str, ...] = field(default_factory=tuple)
+    required_variables: tuple[str, ...] | None = None
     supports_media: bool = False
 
 
@@ -57,6 +59,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.DEFAULT_BOOKING_CONFIRM_TEMPLATE,
         variables=("name", "date", "time", "service", "payment", "address", "address_block"),
+        required_variables=("date", "time", "service", "payment", "address_block"),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -65,7 +68,18 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         description="За 24 часа до визита",
         category_key="clients",
         default_content=texts.DEFAULT_REMINDER_24H_TEMPLATE,
-        variables=("name", "date", "time", "service", "address"),
+        variables=(
+            "name",
+            "display_name",
+            "date",
+            "time",
+            "service",
+            "service_name",
+            "address",
+            "address_short",
+            "address_text",
+        ),
+        required_variables=("date", "time", "service", "address_short"),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -74,7 +88,8 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         description="За 2 часа до визита",
         category_key="clients",
         default_content=texts.DEFAULT_REMINDER_2H_TEMPLATE,
-        variables=("name", "date", "time", "service"),
+        variables=("name", "date", "time", "service", "service_name"),
+        required_variables=("time",),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -116,7 +131,8 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         description="Через несколько недель после визита",
         category_key="clients",
         default_content=texts.DEFAULT_REPEAT_PROMPT_TEMPLATE,
-        variables=("name",),
+        variables=("name", "display_name"),
+        required_variables=(),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -126,6 +142,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.DEFAULT_WINBACK_TEMPLATE,
         variables=("display_name",),
+        required_variables=("display_name",),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -144,6 +161,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.LATE_NOTICE_CLIENT_SENT_DEFAULT_TEXT,
         variables=("minutes", "date", "time", "service", "reason", "comment"),
+        required_variables=("minutes",),
     ),
     TemplateDefinition(
         key="late_notice_client_risky",
@@ -152,6 +170,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.LATE_NOTICE_CLIENT_RISKY_DEFAULT_TEXT,
         variables=("minutes", "date", "time", "service", "reason", "comment"),
+        required_variables=("minutes",),
     ),
     TemplateDefinition(
         key="repair_intro",
@@ -160,6 +179,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.DEFAULT_REPAIR_INTRO_TEMPLATE,
         variables=("date", "service", "warranty_days", "nails_limit"),
+        required_variables=(),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -169,6 +189,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.DEFAULT_REPAIR_REQUEST_RECEIVED_TEMPLATE,
         variables=("date", "service", "issue", "nails_count"),
+        required_variables=(),
         supports_media=True,
     ),
     TemplateDefinition(
@@ -178,6 +199,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         category_key="clients",
         default_content=texts.DEFAULT_REPAIR_WARRANTY_OFFER_TEMPLATE,
         variables=("date", "time", "service"),
+        required_variables=("date", "time", "service"),
     ),
     TemplateDefinition(
         key="repair_not_warranty",
@@ -209,7 +231,10 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="navigation",
         title="📍 Адрес (после записи)",
-        description="Скрытый legacy-шаблон адреса после записи; клиенткам обычно не показывается напрямую",
+        description=(
+            "Скрытый legacy-шаблон адреса после записи; клиенткам обычно "
+            "не показывается напрямую"
+        ),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_POST_CONFIRM,
         variables=(),
@@ -217,7 +242,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     ),
     TemplateDefinition(
         key="navigation_public",
-        title="📍 Адрес (публичный)",
+        title="📍 Публичный адрес + картинка",
         description=(
             "Показывается до записи: отдельный экран с публичным текстом и картинкой"
         ),
@@ -228,7 +253,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     ),
     TemplateDefinition(
         key="address_post_confirm",
-        title="🔐 Полный адрес после записи",
+        title="🔐 Полный адрес — только текст",
         description=(
             "Текст полного адреса для подтверждения и напоминания; картинка "
             "редактируется в шаблоне «Подтверждение записи»"
@@ -260,10 +285,11 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="greeting_header",
         title="Приветствие",
-        description="Текст главной страницы; общий фирменный фон меняется отдельно",
+        description="Текст и картинка главной страницы клиентки",
         category_key="other",
         default_content=texts.MENU_HEADER,
         variables=(),
+        supports_media=True,
     ),
     TemplateDefinition(
         key="admin_menu_text",
@@ -359,6 +385,12 @@ def editable_setting_definitions(settings: Settings) -> list[SettingDefinition]:
             label="Telegram username Ангелы",
             kind="text",
             default_value=DEFAULT_MASTER_TELEGRAM_USERNAME,
+        ),
+        SettingDefinition(
+            key="studio_address_copy_text",
+            label="Адрес для кнопки «Скопировать»",
+            kind="text",
+            default_value=DEFAULT_STUDIO_ADDRESS_COPY_TEXT,
         ),
         SettingDefinition(
             key="reminder_24h_enabled",

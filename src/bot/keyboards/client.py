@@ -517,6 +517,7 @@ def build_back_to_menu_keyboard(
 def build_vitrine_actions_keyboard(
     *,
     address_map_url: str | None = None,
+    address_copy_text: str | None = None,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
 ) -> InlineKeyboardMarkup:
     """Build a symmetric CTA set for marketing/vitrine screens."""
@@ -533,6 +534,8 @@ def build_vitrine_actions_keyboard(
                 )
             ]
         )
+    if address_copy_text:
+        rows.append([_build_copy_text_button("📋 Скопировать адрес", address_copy_text)])
     rows.extend(
         [
             [_build_book_cta_button(button_configs=button_configs)],

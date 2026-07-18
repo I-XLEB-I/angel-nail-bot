@@ -72,10 +72,13 @@ REQUESTS_MENU_PATTERN = re.compile(r"^📥 Запросы \(\d+\)$")
 MAX_TEMPLATE_IMAGE_BYTES = 5 * 1024 * 1024
 DETAIL_CAPTION_SAFE_LIMIT = 950
 TEMPLATE_PENDING_CONTENT_KEY = "admin_template_pending_content"
-HIDDEN_TEMPLATE_KEYS = frozenset({"rules", "navigation"})
+HIDDEN_TEMPLATE_KEYS = frozenset({"rules", "navigation", "repair_declined"})
 
 TEMPLATE_CATEGORY_SUMMARIES: dict[str, str] = {
-    "clients": "Сообщения клиентке на разных этапах: запись, напоминания, aftercare и исключения 🌸",
+    "clients": (
+        "Сообщения клиентке на разных этапах: запись, напоминания, "
+        "aftercare и исключения 🌸"
+    ),
     "address": "Публичный адрес до записи и полный адрес после подтверждения.",
     "schedule": "Короткие подписи и витринные тексты для расписания.",
     "other": "Главная, портфолио, отпуск и прочие служебные экраны.",
@@ -161,7 +164,10 @@ TEMPLATE_GROUPS_BY_CATEGORY: dict[str, tuple[TemplateGroup, ...]] = {
         TemplateGroup(
             key="navigation",
             title="📍 Адрес и навигация",
-            summary="Публичная версия до записи и полный адрес после подтверждения.",
+            summary=(
+                "Картинка меняется в пункте публичного адреса. Полный адрес "
+                "подставляется текстом в подтверждения и напоминания."
+            ),
             template_keys=("navigation_public", "navigation", "address_post_confirm"),
         ),
     ),
@@ -285,7 +291,8 @@ def list_template_definitions_for_group(
     if group is None:
         return []
     definitions_by_key = {
-        definition.key: definition for definition in list_template_definitions(category_key=category_key)
+        definition.key: definition
+        for definition in list_template_definitions(category_key=category_key)
     }
     return [
         definitions_by_key[key]
@@ -312,9 +319,14 @@ def _collect_template_placeholder_warnings(
         for token in _find_template_placeholder_tokens(content)
         if token
     }
-    required_tokens = set(definition.variables)
+    required_tokens = set(
+        definition.variables
+        if definition.required_variables is None
+        else definition.required_variables
+    )
+    allowed_tokens = set(definition.variables)
     missing = sorted(required_tokens - found_tokens)
-    unknown = sorted(found_tokens - required_tokens)
+    unknown = sorted(found_tokens - allowed_tokens)
     return missing, unknown
 
 
@@ -416,21 +428,30 @@ def build_template_meta_line(
     default_content: str,
     variable_count: int,
     supports_media: bool,
-    has_media: bool,
+    media_source: str | None,
+    has_bundled_media: bool,
 ) -> str:
     """Build one compact metadata line for category and detail screens."""
-    status_label = "свой текст" if current_content.strip() != default_content.strip() else "по умолчанию"
+    status_label = (
+        "свой текст"
+        if current_content.strip() != default_content.strip()
+        else "по умолчанию"
+    )
     variable_label = (
         f"{variable_count} перем."
         if variable_count
         else "без переменных"
     )
     if not supports_media:
-        media_label = "без картинки"
-    elif has_media:
-        media_label = "картинка есть"
+        media_label = "только текст"
+    elif media_source == "uploaded":
+        media_label = "своя картинка"
+    elif media_source == "bundled":
+        media_label = "стандартная картинка"
+    elif has_bundled_media:
+        media_label = "картинка отключена"
     else:
-        media_label = "можно добавить картинку"
+        media_label = "без картинки"
     return f"{status_label} · {variable_label} · {media_label}"
 
 
@@ -491,7 +512,10 @@ async def build_template_group_text(
         group.summary,
         "",
     ]
-    definitions = list_template_definitions_for_group(category_key=category_key, group_key=group_key)
+    definitions = list_template_definitions_for_group(
+        category_key=category_key,
+        group_key=group_key,
+    )
     for index, definition in enumerate(definitions, start=1):
         current_content = await repository.get_content_or_default(
             definition.key,
@@ -502,7 +526,8 @@ async def build_template_group_text(
             default_content=definition.default_content,
             variable_count=len(definition.variables),
             supports_media=definition.supports_media,
-            has_media=has_template_media(definition.key),
+            media_source=template_media_source(definition.key),
+            has_bundled_media=has_bundled_template_media(definition.key),
         )
         lines.extend(
             [
@@ -535,7 +560,8 @@ async def build_template_detail_text(
         default_content=definition.default_content,
         variable_count=len(definition.variables),
         supports_media=definition.supports_media,
-        has_media=has_template_media(definition.key),
+        media_source=template_media_source(definition.key),
+        has_bundled_media=has_bundled_template_media(definition.key),
     )
     text = texts.ADMIN_TEMPLATE_DETAIL_TEXT.format(
         title=definition.title,
@@ -552,6 +578,7 @@ async def build_template_detail_text(
         has_media=has_template_media(definition.key),
         has_bundled_media=has_bundled_template_media(definition.key),
         uses_bundled_media=template_media_source(definition.key) == "bundled",
+        has_custom_text=content.strip() != definition.default_content.strip(),
     )
     return text, reply_markup
 
@@ -1288,6 +1315,39 @@ async def restore_template_image_callback(
         )
 
 
+@router.callback_query(F.data.startswith("admin_templates:reset_text:"))
+async def reset_template_text_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    is_admin: bool,
+    db_session: AsyncSession,
+) -> None:
+    """Restore the built-in text for one editable template."""
+    if not is_admin:
+        await callback.answer(texts.ADMIN_ONLY_TEXT, show_alert=True)
+        return
+    template_key = callback.data.rsplit(":", 1)[-1]
+    definition = get_template_definition(template_key)
+    if definition is None:
+        await callback.answer("Не нашла этот шаблон", show_alert=True)
+        return
+    await TemplateRepository(db_session).upsert(
+        key=template_key,
+        content=definition.default_content,
+    )
+    await db_session.commit()
+    await callback.answer("Вернула стандартный текст")
+    if callback.message is not None:
+        await show_template_detail(
+            callback.message,
+            db_session=db_session,
+            template_key=template_key,
+            edit=True,
+            state=state,
+        )
+
+
 @router.callback_query(
     StateFilter(AdminTemplateEdit.input_content, AdminTemplateEdit.confirm_content),
     F.data == "admin_templates:cancel_edit",
@@ -1587,4 +1647,10 @@ async def save_template_image_content(
             state=state,
         )
         return
-    await show_template_category(message, db_session=db_session, category_key=category_key, edit=False, state=state)
+    await show_template_category(
+        message,
+        db_session=db_session,
+        category_key=category_key,
+        edit=False,
+        state=state,
+    )

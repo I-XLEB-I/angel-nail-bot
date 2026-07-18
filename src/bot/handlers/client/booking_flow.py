@@ -1,25 +1,18 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
-from aiogram.enums import ParseMode
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
 from src.bot.fsm_utils import clear_state_preserving_admin_mode
 from src.bot.handlers.admin.approvals import send_approval_card_to_admins
-from src.bot.handlers.client.address import (
-    build_address_copy_text,
-    build_address_map_url,
-    build_address_text,
-)
 from src.bot.handlers.client.booking_confirmation import send_booking_confirmation_message
 from src.bot.handlers.client.brand import send_brand_message, send_template_message
 from src.bot.handlers.client.menu import show_client_menu
@@ -37,11 +30,20 @@ from src.bot.keyboards.client import (
     build_name_confirmation_keyboard,
     build_no_slots_keyboard,
     build_payment_method_keyboard,
-    build_post_booking_cta_keyboard,
     build_reference_actions_keyboard,
     build_reference_prompt_keyboard,
     build_schedule_days_keyboard,
     build_times_keyboard,
+)
+from src.bot.slot_picker import (
+    order_day_options_by_preference as shared_order_day_options_by_preference,
+)
+from src.bot.slot_picker import (
+    order_slots_by_time_preference as shared_order_slots_by_time_preference,
+)
+from src.bot.slot_picker import (
+    render_day_picker,
+    render_time_picker,
 )
 from src.bot.states import AwaitCustomTime, Onboarding, PostBookingReference
 from src.bot.states import Booking as BookingStates
@@ -49,12 +51,6 @@ from src.bot.ui_utils import (
     replace_inline_message_panel,
     replace_inline_message_text,
     safe_delete_message,
-)
-from src.bot.slot_picker import (
-    order_day_options_by_preference as shared_order_day_options_by_preference,
-    order_slots_by_time_preference as shared_order_slots_by_time_preference,
-    render_day_picker,
-    render_time_picker,
 )
 from src.config import Settings
 from src.db.models import ApprovalRequestKind, ServiceKind, User, utcnow
@@ -81,8 +77,6 @@ from src.services.booking import (
     build_booking_summary_text,
     build_reference_progress_text,
     format_local_datetime,
-    format_local_day_label,
-    format_payment_method_label,
     group_slots_by_local_day,
     needs_onboarding,
     normalize_payment_method,
@@ -96,21 +90,20 @@ from src.services.button_configs import (
     load_all_button_configs,
     load_master_contact_url,
 )
+from src.services.direct_booking import finalize_direct_booking_attempt
 from src.services.notifications import (
     send_photo_to_admins,
     send_text_to_admins,
     send_voice_to_admins,
 )
-from src.services.direct_booking import finalize_direct_booking_attempt
 from src.services.rescue_slots import slot_is_rescuable
 from src.services.runtime_settings import get_bool_setting
 from src.services.schedule_image import (
-    build_schedule_image_pages_data,
-    is_schedule_image_enabled,
-    render_schedule_image_bytes,
+    build_schedule_image_pages_data,  # noqa: F401 - compatibility monkeypatch hook
+    is_schedule_image_enabled,  # noqa: F401 - compatibility monkeypatch hook
+    render_schedule_image_bytes,  # noqa: F401 - compatibility monkeypatch hook
 )
 from src.services.template_media import has_template_media
-from src.services.template_texts import render_template_text
 
 router = Router(name="client_booking_flow")
 
@@ -506,17 +499,13 @@ async def show_day_step(
             "vacation_notice",
             template_defaults["vacation_notice"],
         )
-        if replace:
-            await replace_inline_message_text(
-                message,
-                vacation_text,
-                reply_markup=build_back_to_menu_keyboard(button_configs=button_configs),
-            )
-        else:
-            await message.answer(
-                vacation_text,
-                reply_markup=build_back_to_menu_keyboard(button_configs=button_configs),
-            )
+        await send_template_message(
+            message,
+            template_key="vacation_notice",
+            caption=vacation_text,
+            reply_markup=build_back_to_menu_keyboard(button_configs=button_configs),
+            replace_current=replace,
+        )
         return
 
     repository = SlotRepository(db_session)

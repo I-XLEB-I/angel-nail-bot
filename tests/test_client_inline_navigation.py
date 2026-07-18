@@ -150,6 +150,10 @@ async def test_show_address_replaces_current_message_in_place() -> None:
             key="navigation_public",
             content="📍 Тестовый адрес",
         )
+        await SettingRepository(session).upsert(
+            key="studio_address_copy_text",
+            value="Тестовая улица, 10",
+        )
         await session.commit()
 
         callback = FakeCallback()
@@ -167,6 +171,10 @@ async def test_show_address_replaces_current_message_in_place() -> None:
         first_button = markup.inline_keyboard[0][0]
         assert first_button.text == "🗺 Открыть в Яндекс Картах"
         assert first_button.url == address_handler.ADDRESS_MAP_URL
+        copy_button = markup.inline_keyboard[1][0]
+        assert copy_button.text == "📋 Скопировать адрес"
+        assert copy_button.copy_text is not None
+        assert copy_button.copy_text.text == "Тестовая улица, 10"
         assert callback.message.answers == []
         assert callback.message.deleted == 0
 
@@ -383,6 +391,49 @@ async def test_show_payment_step_routes_through_brand_message(monkeypatch) -> No
         assert len(calls) == 1
         assert calls[0]["caption"] == booking_flow_handler.texts.BOOKING_CHOOSE_PAYMENT_TEXT
         assert calls[0]["reply_markup"] is not None
+        assert calls[0]["replace_current"] is True
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_vacation_screen_uses_configured_template_media(monkeypatch) -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        await SettingRepository(session).upsert(key="vacation_mode", value="1")
+        await TemplateRepository(session).upsert(
+            key="vacation_notice",
+            content="Ангела сейчас в отпуске, скоро вернусь 🌸",
+        )
+        await session.commit()
+        calls: list[dict[str, object]] = []
+
+        async def fake_send_template_message(message, **kwargs) -> None:
+            del message
+            calls.append(kwargs)
+
+        monkeypatch.setattr(
+            booking_flow_handler,
+            "send_template_message",
+            fake_send_template_message,
+        )
+
+        await booking_flow_handler.show_day_step(
+            FakeMessage(),
+            db_session=session,
+            state=FakeState(),
+            settings=settings,
+            replace=True,
+        )
+
+        assert calls[0]["template_key"] == "vacation_notice"
+        assert calls[0]["caption"] == "Ангела сейчас в отпуске, скоро вернусь 🌸"
         assert calls[0]["replace_current"] is True
 
     await engine.dispose()

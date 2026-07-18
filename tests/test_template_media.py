@@ -80,3 +80,12 @@ def test_uploaded_media_overrides_bundled_media(tmp_path, monkeypatch) -> None:
     assert template_media.restore_bundled_template_media("price") is True
     assert uploaded_path.exists() is False
     assert template_media.template_media_source("price") == "bundled"
+
+
+def test_greeting_uses_brand_image_as_its_bundled_media(tmp_path, monkeypatch) -> None:
+    configure_media_roots(tmp_path, monkeypatch)
+    brand_path = template_media.BUNDLED_TEMPLATE_MEDIA_ROOT.parent / "brand.jpg"
+    brand_path.write_bytes(b"brand-image")
+
+    assert template_media.template_media_source("greeting_header") == "bundled"
+    assert template_media.template_media_path("greeting_header") == brand_path

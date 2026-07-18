@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from src.bot import texts
 
-
 PLACEHOLDER_SNIPPETS: dict[str, tuple[str, ...]] = {
     "price": ("Сюда можно добавить актуальный прайс",),
     "navigation_public": ("[Ангела", "[ангела"),
@@ -52,6 +51,24 @@ LEGACY_BOOKING_CONFIRM_COMPACT = """Записала тебя 🪄
 Буду напоминать за сутки. Если что-то изменится — жми «Мои записи» в меню.
 
 До встречи 🤍"""
+
+LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP = (
+    "📍 АДРЕС И КАК ДОБРАТЬСЯ\n\n"
+    "Очаковское шоссе, 5к3, подъезд 2\n\n"
+    '🗺 <a href="https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/'
+    'Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&amp;ll=37.461811%2C55.694677&amp;z=17.96">'
+    "Открыть в Яндекс Картах</a>\n\n"
+    "Если захочешь уточнить дорогу заранее — можно сразу написать Ангеле 🌸"
+)
+
+LEGACY_ADDRESS_POST_CONFIRM_WITH_INLINE_MAP = (
+    "📍 АДРЕС\n\n"
+    "Очаковское шоссе, 5к3, подъезд 2\n\n"
+    '🗺 <a href="https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/'
+    'Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&amp;ll=37.461811%2C55.694677&amp;z=17.96">'
+    "Открыть в Яндекс Картах</a>\n\n"
+    "Если что-то по дороге пойдёт не так — просто напиши, Ангела поможет 🌸"
+)
 
 
 def _normalize_export_prefix(key: str, stripped: str, default: str) -> str | None:
@@ -152,6 +169,13 @@ def normalize_template_content(key: str, content: str | None, default: str) -> s
         normalized_booking_confirm = _normalize_booking_confirm(stripped)
         if normalized_booking_confirm is not None:
             return normalized_booking_confirm
+    if key == "navigation_public" and stripped == LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP.strip():
+        return texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE
+    if (
+        key == "address_post_confirm"
+        and stripped == LEGACY_ADDRESS_POST_CONFIRM_WITH_INLINE_MAP.strip()
+    ):
+        return texts.DEFAULT_ADDRESS_POST_CONFIRM
 
     for snippet in PLACEHOLDER_SNIPPETS.get(key, ()):
         if snippet in content:

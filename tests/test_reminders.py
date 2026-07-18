@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.bot.handlers.client import reminders as reminders_handler
-from src.bot.handlers.client.address import build_address_copy_text
 from src.config import Settings
 from src.db.base import Base
 from src.db.models import Booking, BookingStatus, Service, ServiceKind, Slot, SlotStatus, User
@@ -166,6 +165,12 @@ async def test_send_due_reminders_marks_24h_sent(monkeypatch) -> None:
         session_factory,
         start_at=datetime.now(UTC) + timedelta(hours=24),
     )
+    async with session_factory() as session:
+        await SettingRepository(session).upsert(
+            key="studio_address_copy_text",
+            value="Новая улица, 12",
+        )
+        await session.commit()
 
     monkeypatch.setattr(
         reminders, "session_scope", lambda _settings: make_session_scope(session_factory)
@@ -182,7 +187,7 @@ async def test_send_due_reminders_marks_24h_sent(monkeypatch) -> None:
     assert len(bot.messages) == 1
     assert "напоминаю о записи" in str(bot.messages[0]["text"]).lower()
     assert "всё в силе?" in str(bot.messages[0]["text"]).lower()
-    assert build_address_copy_text() in str(bot.messages[0]["text"])
+    assert "Новая улица, 12" in str(bot.messages[0]["text"])
 
     async with session_factory() as session:
         booking = await session.get(Booking, booking_id)

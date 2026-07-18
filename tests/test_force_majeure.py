@@ -21,18 +21,23 @@ from src.db.models import (
     SlotStatus,
     User,
 )
+from src.db.repositories.templates import TemplateRepository
 
 
 class FakeState:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = dict(data or {})
         self.cleared = False
+        self.state = None
 
     async def get_data(self) -> dict[str, object]:
         return dict(self.data)
 
     async def update_data(self, **kwargs: object) -> None:
         self.data.update(kwargs)
+
+    async def set_state(self, state) -> None:
+        self.state = state
 
     async def clear(self) -> None:
         self.data.clear()
@@ -73,6 +78,51 @@ def build_settings() -> Settings:
         TZ="Europe/Moscow",
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
     )
+
+
+@pytest.mark.asyncio
+async def test_force_majeure_day_uses_editable_default_template(monkeypatch) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    rendered: list[tuple[str, object | None]] = []
+
+    async def fake_replace(message, text, reply_markup=None, **kwargs) -> None:
+        del message, kwargs
+        rendered.append((text, reply_markup))
+
+    monkeypatch.setattr(
+        force_majeure_handler,
+        "replace_inline_message_text",
+        fake_replace,
+    )
+
+    async with session_factory() as session:
+        await TemplateRepository(session).upsert(
+            key="force_majeure_notice",
+            content="Свой текст форс-мажора для клиентки",
+        )
+        await session.commit()
+        callback = FakeCallback("force_majeure:day:2026-07-20")
+        state = FakeState()
+
+        await force_majeure_handler.force_majeure_day_chosen(
+            callback,
+            state,
+            is_admin=True,
+            db_session=session,
+        )
+
+        assert state.data["force_majeure_reason"] == "Свой текст форс-мажора для клиентки"
+        assert "Свой текст форс-мажора" in rendered[0][0]
+        markup = rendered[0][1]
+        assert markup.inline_keyboard[0][0].callback_data == (
+            "force_majeure:use_template:2026-07-20"
+        )
+
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

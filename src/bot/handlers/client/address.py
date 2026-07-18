@@ -9,9 +9,13 @@ from src.bot.keyboards.client import build_vitrine_actions_keyboard
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.button_configs import DEFAULT_ADDRESS_MAP_URL, load_all_button_configs
+from src.services.studio_address import (
+    DEFAULT_STUDIO_ADDRESS_COPY_TEXT,
+    load_studio_address_copy_text,
+)
 
 router = Router(name="client_address")
-ADDRESS_COPY_TEXT = "Очаковское шоссе, 5к3, подъезд 2"
+ADDRESS_COPY_TEXT = DEFAULT_STUDIO_ADDRESS_COPY_TEXT
 ADDRESS_MAP_URL = DEFAULT_ADDRESS_MAP_URL
 
 
@@ -34,7 +38,7 @@ async def build_address_text(db_session: AsyncSession) -> str:
 
 
 def build_address_copy_text() -> str:
-    """Return the short plain-text address used in copy buttons."""
+    """Return the default short address kept for backwards compatibility."""
     return ADDRESS_COPY_TEXT
 
 
@@ -54,13 +58,16 @@ async def show_address(
     if callback.message is None:
         return
 
-    button_configs = await load_all_button_configs(SettingRepository(db_session))
+    settings_repository = SettingRepository(db_session)
+    button_configs = await load_all_button_configs(settings_repository)
     address_text = await build_public_address_text(db_session)
+    address_copy_text = await load_studio_address_copy_text(settings_repository)
     await send_brand_message(
         callback.message,
         caption=address_text,
         reply_markup=build_vitrine_actions_keyboard(
             address_map_url=build_address_map_url(),
+            address_copy_text=address_copy_text,
             button_configs=button_configs,
         ),
         replace_current=True,

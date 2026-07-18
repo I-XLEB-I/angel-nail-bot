@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
 from src.bot.fsm_utils import clear_state_preserving_admin_mode
+from src.bot.handlers.client.brand import send_template_message
 from src.bot.keyboards.client import build_client_main_menu
-from src.bot.ui_utils import replace_inline_message_panel
 from src.db.models import User
 from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.settings import SettingRepository
@@ -25,8 +24,6 @@ from src.services.template_sanitizer import normalize_template_content
 _LAPSED_DAYS = 60
 
 router = Router(name="client_menu")
-
-BRAND_IMAGE_PATH = Path(__file__).resolve().parents[4] / "assets" / "brand.jpg"
 
 
 def normalize_menu_header_text(header_text: str) -> str:
@@ -80,35 +77,13 @@ async def show_client_menu(
         contact_url=contact_url,
     )
 
-    if BRAND_IMAGE_PATH.exists():
-        if replace_current:
-            await replace_inline_message_panel(
-                message,
-                photo_bytes=BRAND_IMAGE_PATH.read_bytes(),
-                filename=BRAND_IMAGE_PATH.name,
-                caption=header_text,
-                reply_markup=reply_markup,
-            )
-            return
-        try:
-            await message.answer_photo(
-                photo=FSInputFile(str(BRAND_IMAGE_PATH)),
-                caption=header_text,
-                reply_markup=reply_markup,
-            )
-        except Exception:
-            await message.answer(header_text, reply_markup=reply_markup)
-        return
-
-    if replace_current:
-        await replace_inline_message_panel(
-            message,
-            text=header_text,
-            reply_markup=reply_markup,
-        )
-        return
-
-    await message.answer(header_text, reply_markup=reply_markup)
+    await send_template_message(
+        message,
+        template_key="greeting_header",
+        caption=header_text,
+        reply_markup=reply_markup,
+        replace_current=replace_current,
+    )
 
 
 @router.callback_query(F.data == "client_menu:back")

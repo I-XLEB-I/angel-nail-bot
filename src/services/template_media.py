@@ -22,6 +22,8 @@ def _uploaded_media_path(key: str) -> Path:
 
 
 def _bundled_media_path(key: str) -> Path:
+    if _normalize_key(key) == "greeting_header":
+        return BUNDLED_TEMPLATE_MEDIA_ROOT.parent / "brand.jpg"
     return BUNDLED_TEMPLATE_MEDIA_ROOT / f"{_normalize_key(key)}.jpg"
 
 

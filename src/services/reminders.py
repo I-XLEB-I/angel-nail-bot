@@ -33,6 +33,7 @@ from src.services.booking import booking_needs_manual_resolution, format_local_d
 from src.services.button_configs import load_all_button_configs
 from src.services.morning_summary import refresh_live_morning_summary_for_today
 from src.services.runtime_settings import get_bool_setting, get_int_setting, get_runtime_tz
+from src.services.studio_address import load_studio_address_copy_text
 from src.services.template_texts import ensure_late_policy_notice, render_template_text
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ async def build_24h_reminder_text(
     *,
     template_repository: TemplateRepository,
     address_text: str,
+    address_copy_text: str | None = None,
     tz_name: str,
 ) -> str:
     """Render the 24h reminder text."""
@@ -77,7 +79,7 @@ async def build_24h_reminder_text(
             "time": local_dt.strftime("%H:%M"),
             "service": booking.base_service.name,
             "address": address_text,
-            "address_short": build_address_copy_text(),
+            "address_short": address_copy_text or build_address_copy_text(),
             "display_name": booking.client.display_name,
             "service_name": booking.base_service.name,
             "address_text": address_text,
@@ -168,6 +170,9 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
         button_configs_24h = (
             await load_all_button_configs(settings_repository) if due_24h else None
         )
+        address_copy_text = (
+            await load_studio_address_copy_text(settings_repository) if due_24h else ""
+        )
         local_today = datetime.now(ZoneInfo(tz_name)).date()
         should_refresh_morning_summary = False
 
@@ -180,13 +185,14 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
                         booking,
                         template_repository=template_repository,
                         address_text=address_text,
+                        address_copy_text=address_copy_text,
                         tz_name=tz_name,
                     ),
                     template_key="reminder_24h",
                     reply_markup=build_reminder_24h_keyboard(
                         booking.id,
                         address_map_url=build_address_map_url(),
-                        address_copy_text=build_address_copy_text(),
+                        address_copy_text=address_copy_text,
                         button_configs=button_configs_24h,
                     ),
                     parse_mode="HTML",

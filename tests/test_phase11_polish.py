@@ -10,6 +10,10 @@ from src.bot.keyboards.admin import (
     build_admin_settings_edit_keyboard,
 )
 from src.bot.keyboards.client import build_back_to_menu_keyboard
+from src.services.template_sanitizer import (
+    LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP,
+    normalize_template_content,
+)
 
 
 def test_phase11_texts_keep_runtime_placeholders_normalized() -> None:
@@ -46,6 +50,17 @@ def test_legacy_menu_header_is_normalized_to_current_copy() -> None:
 
 Выбирай раздел ниже 👇"""
     assert menu_handler.normalize_menu_header_text(raw) == texts.MENU_HEADER
+
+
+def test_legacy_address_map_link_is_replaced_by_button_only_copy() -> None:
+    normalized = normalize_template_content(
+        "navigation_public",
+        LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP,
+        texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE,
+    )
+
+    assert normalized == texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE
+    assert "<a href=" not in normalized
 
 
 def test_literal_template_key_is_not_used_as_portfolio_intro() -> None:

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from src.bot.handlers.admin import templates_edit as templates_handler
 from src.config import Settings
 from src.db.base import Base
+from src.db.repositories.templates import TemplateRepository
 
 
 class FakeState:
@@ -184,6 +185,7 @@ async def test_open_template_group_shows_only_group_templates() -> None:
         assert markup is not None
         labels = [button.text for row in markup.inline_keyboard for button in row]
         assert "🛠 Ремонт / гарантия — интро" in labels
+        assert "🛠 Ремонт / гарантия — отказ" not in labels
         assert "🔔 Напоминание за сутки" not in labels
 
     await engine.dispose()
@@ -247,9 +249,39 @@ async def test_open_single_group_category_skips_transition_screen() -> None:
         markup = first_rendered_markup(callback.message)
         assert markup is not None
         labels = [button.text for row in markup.inline_keyboard for button in row]
-        assert "📍 Адрес (публичный)" in labels
-        assert "🔐 Полный адрес после записи" in labels
+        assert "📍 Публичный адрес + картинка" in labels
+        assert "🔐 Полный адрес — только текст" in labels
         assert markup.inline_keyboard[-2][0].callback_data == "admin_templates:home"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_public_address_detail_can_replace_bundled_image() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        callback = FakeCallback("admin_templates:open:navigation_public")
+        state = FakeState()
+
+        await templates_handler.open_template_detail_callback(
+            callback,
+            state,
+            is_admin=True,
+            db_session=session,
+        )
+
+        markup = first_rendered_markup(callback.message)
+        if markup is None and callback.message.photos:
+            markup = callback.message.photos[0][2]
+        assert markup is not None
+        labels = [button.text for row in markup.inline_keyboard for button in row]
+        assert "🖼 Заменить картинку" in labels
+        assert "🗑 Удалить картинку" in labels
 
     await engine.dispose()
 
@@ -416,7 +448,9 @@ async def test_preview_template_image_callback_only_acknowledges_existing_previe
     )
 
     assert callback.answered is True
-    assert callback.answer_args == (templates_handler.texts.ADMIN_TEMPLATE_IMAGE_ALREADY_VISIBLE_TEXT,)
+    assert callback.answer_args == (
+        templates_handler.texts.ADMIN_TEMPLATE_IMAGE_ALREADY_VISIBLE_TEXT,
+    )
     assert callback.message.photos == []
 
 
@@ -905,9 +939,87 @@ async def test_save_template_content_warns_about_missing_and_unknown_placeholder
     await engine.dispose()
 
 
+def test_default_reminder_placeholders_match_editor_contract() -> None:
+    missing, unknown = templates_handler._collect_template_placeholder_warnings(
+        "reminder_24h",
+        templates_handler.texts.DEFAULT_REMINDER_24H_TEMPLATE,
+    )
+
+    assert missing == []
+    assert unknown == []
+
+
+def test_optional_repeat_prompt_name_is_not_reported_as_missing() -> None:
+    missing, unknown = templates_handler._collect_template_placeholder_warnings(
+        "repeat_prompt",
+        templates_handler.texts.DEFAULT_REPEAT_PROMPT_TEMPLATE,
+    )
+
+    assert missing == []
+    assert unknown == []
+
+    missing, unknown = templates_handler._collect_template_placeholder_warnings(
+        "repeat_prompt",
+        "Снова ждём тебя, {display_name} 🌸",
+    )
+
+    assert missing == []
+    assert unknown == []
+
+
+@pytest.mark.asyncio
+async def test_reset_template_text_restores_default(monkeypatch) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        repository = TemplateRepository(session)
+        await repository.upsert(key="price", content="Свой изменённый текст прайса")
+        await session.commit()
+        rendered: list[str] = []
+
+        async def fake_show_template_detail(
+            message,
+            *,
+            db_session,
+            template_key,
+            edit,
+            state,
+        ) -> None:
+            del message, db_session, edit, state
+            rendered.append(template_key)
+
+        monkeypatch.setattr(
+            templates_handler,
+            "show_template_detail",
+            fake_show_template_detail,
+        )
+        callback = FakeCallback("admin_templates:reset_text:price")
+
+        await templates_handler.reset_template_text_callback(
+            callback,
+            FakeState(),
+            is_admin=True,
+            db_session=session,
+        )
+
+        definition = templates_handler.get_template_definition("price")
+        assert definition is not None
+        assert await repository.get_content("price") == definition.default_content
+        assert rendered == ["price"]
+
+    await engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_save_template_image_content_rejects_oversized_file() -> None:
-    message = FakeUploadMessage(photo=[_FakePhotoSize("largest")], bot=_FakeBot(b"x" * (6 * 1024 * 1024)))
+    message = FakeUploadMessage(
+        photo=[_FakePhotoSize("largest")],
+        bot=_FakeBot(b"x" * (6 * 1024 * 1024)),
+    )
     state = FakeState()
     await state.set_state(templates_handler.AdminTemplateEdit.await_image)
     await state.update_data(admin_template_key="booking_confirm")

@@ -26,12 +26,14 @@ from src.db.repositories.system_job_statuses import SystemJobStatusRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.admin_defaults import editable_setting_definitions
 from src.services.runtime_settings import get_bool_setting, get_int_setting, get_runtime_tz
+from src.services.studio_address import DEFAULT_STUDIO_ADDRESS_COPY_TEXT
 
 router = Router(name="admin_settings_edit")
 
 SETTING_TITLES = {
     "tz": "Часовой пояс",
     "master_telegram_username": "Telegram username Ангелы",
+    "studio_address_copy_text": "Адрес для кнопки «Скопировать»",
     "repeat_prompt_weeks": "Repeat-prompt (недели)",
     "min_days_between_bookings": "Интервал между записями (дни)",
     "max_active_bookings_per_user": "Макс. активных записей на клиента",
@@ -60,6 +62,10 @@ SETTING_TITLES = {
 SETTING_PROMPTS = {
     "tz": "Пришли новый часовой пояс. Пример: Europe/Moscow.",
     "master_telegram_username": "Пришли username без @ или со знаком @.",
+    "studio_address_copy_text": (
+        "Пришли короткий адрес одним сообщением. Именно его клиентка получит "
+        "по кнопке «Скопировать адрес»."
+    ),
     "repeat_prompt_weeks": "Пришли целое число больше нуля.",
     "min_days_between_bookings": "Пришли целое число больше нуля.",
     "max_active_bookings_per_user": "Пришли целое число больше нуля.",
@@ -112,6 +118,10 @@ async def render_settings_text(db_session: AsyncSession, settings: Settings) -> 
     master_telegram_username = await repository.get_value_or_default(
         "master_telegram_username",
         "ny_pip",
+    )
+    studio_address_copy_text = await repository.get_value_or_default(
+        "studio_address_copy_text",
+        DEFAULT_STUDIO_ADDRESS_COPY_TEXT,
     )
     reminder_2h_enabled = await get_bool_setting(
         repository,
@@ -261,6 +271,7 @@ async def render_settings_text(db_session: AsyncSession, settings: Settings) -> 
             "🌐 Основное",
             f"  Часовой пояс: {tz_name}",
             f"  Telegram username: @{master_telegram_username.lstrip('@')}",
+            f"  Адрес для копирования: {studio_address_copy_text}",
             f"  Режим отпуска: {humanize_bool(vacation_mode)}",
             "",
             "⏰ Уведомления",
@@ -667,6 +678,20 @@ async def save_setting_value(
             )
             return
         value = normalized
+    elif key == "studio_address_copy_text":
+        if len(raw_value) < 5 or len(raw_value) > 200:
+            await upsert_inline_panel(
+                message.bot,
+                chat_id=panel_chat_id,
+                message_id=panel_message_id,
+                text=render_setting_edit_text(
+                    key,
+                    error_text="Нужен адрес длиной от 5 до 200 символов.",
+                ),
+                reply_markup=build_admin_settings_edit_keyboard(),
+            )
+            return
+        value = raw_value
     elif key in {
         "repeat_prompt_weeks",
         "min_days_between_bookings",

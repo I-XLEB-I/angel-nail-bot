@@ -1584,6 +1584,22 @@ def build_force_majeure_day_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_force_majeure_reason_keyboard(iso_date: str) -> InlineKeyboardMarkup:
+    """Offer the editable default text before asking for a custom reason."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Использовать шаблон",
+                    callback_data=f"force_majeure:use_template:{iso_date}",
+                    style=ButtonStyle.SUCCESS,
+                )
+            ],
+            [nav_button("⬅️ Отмена", "admin_menu:home")],
+        ]
+    )
+
+
 def build_force_majeure_confirm_keyboard(iso_date: str) -> InlineKeyboardMarkup:
     """Confirm/cancel keyboard for the force-majeure action."""
     return InlineKeyboardMarkup(
@@ -2252,6 +2268,7 @@ def build_admin_template_detail_keyboard(
     has_media: bool = False,
     has_bundled_media: bool = False,
     uses_bundled_media: bool = False,
+    has_custom_text: bool = False,
 ) -> InlineKeyboardMarkup:
     """Build actions below one template detail view."""
     rows = [
@@ -2263,6 +2280,15 @@ def build_admin_template_detail_keyboard(
             )
         ]
     ]
+    if has_custom_text:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="↩️ Вернуть стандартный текст",
+                    callback_data=f"admin_templates:reset_text:{template_key}",
+                )
+            ]
+        )
     if supports_media:
         media_row: list[InlineKeyboardButton] = []
         media_row.append(
@@ -2359,6 +2385,7 @@ ADMIN_SETTINGS_SECTIONS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
         (
             ("Часовой пояс", "admin_settings:edit:tz"),
             ("Telegram username Ангелы", "admin_settings:edit:master_telegram_username"),
+            ("Адрес для кнопки «Скопировать»", "admin_settings:edit:studio_address_copy_text"),
             ("Режим отпуска", "admin_settings:toggle:vacation_mode"),
         ),
     ),

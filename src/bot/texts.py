@@ -63,18 +63,14 @@ DEFAULT_ABOUT_MASTER_TEMPLATE = """🌸 Знакомься — это Ангел
 DEFAULT_ADDRESS_PUBLIC_TEMPLATE = (
     "📍 АДРЕС И КАК ДОБРАТЬСЯ\n\n"
     "Очаковское шоссе, 5к3, подъезд 2\n\n"
-    '🗺 <a href="https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/'
-    'Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&amp;ll=37.461811%2C55.694677&amp;z=17.96">'
-    "Открыть в Яндекс Картах</a>\n\n"
+    "Маршрут откроется по кнопке ниже.\n\n"
     "Если захочешь уточнить дорогу заранее — можно сразу написать Ангеле 🌸"
 )
 
 DEFAULT_ADDRESS_POST_CONFIRM = (
     "📍 АДРЕС\n\n"
     "Очаковское шоссе, 5к3, подъезд 2\n\n"
-    '🗺 <a href="https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/'
-    'Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&amp;ll=37.461811%2C55.694677&amp;z=17.96">'
-    "Открыть в Яндекс Картах</a>\n\n"
+    "Маршрут откроется по кнопке ниже.\n\n"
     "Если что-то по дороге пойдёт не так — просто напиши, Ангела поможет 🌸"
 )
 

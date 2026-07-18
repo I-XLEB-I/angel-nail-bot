@@ -202,6 +202,40 @@ async def test_save_setting_value_updates_existing_panel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_save_address_copy_setting_updates_runtime_value() -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        bot = FakeBot()
+        message = FakeMessage("Новая улица, 12", bot=bot)
+        state = FakeState(
+            {
+                "admin_settings_key": "studio_address_copy_text",
+                "admin_settings_panel_chat_id": 500,
+                "admin_settings_panel_message_id": 77,
+            }
+        )
+
+        await settings_handler.save_setting_value(
+            message,
+            state,
+            db_session=session,
+            settings=settings,
+        )
+
+        saved = await SettingRepository(session).get_value("studio_address_copy_text")
+        assert saved == "Новая улица, 12"
+        assert bot.edits
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_open_broadcast_shows_recipient_count() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
