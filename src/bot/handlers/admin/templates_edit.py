@@ -44,6 +44,7 @@ from src.db.repositories.templates import TemplateRepository
 from src.services.admin_defaults import (
     TemplateDefinition,
     get_template_definition,
+    get_template_media_key,
     list_template_categories,
     list_template_definitions,
     required_template_defaults,
@@ -64,9 +65,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_IMAGE_MIME_TYPES = frozenset(
     {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"}
 )
-SUPPORTED_IMAGE_EXTENSIONS = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
-)
+SUPPORTED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"})
 PLACEHOLDER_PATTERN = re.compile(r"\{([^{}\n\r]+)\}")
 REQUESTS_MENU_PATTERN = re.compile(r"^📥 Запросы \(\d+\)$")
 MAX_TEMPLATE_IMAGE_BYTES = 5 * 1024 * 1024
@@ -76,13 +75,13 @@ HIDDEN_TEMPLATE_KEYS = frozenset({"rules", "navigation", "repair_declined"})
 
 TEMPLATE_CATEGORY_SUMMARIES: dict[str, str] = {
     "clients": (
-        "Сообщения клиентке на разных этапах: запись, напоминания, "
-        "aftercare и исключения 🌸"
+        "Сообщения клиентке на разных этапах: запись, напоминания, aftercare и исключения 🌸"
     ),
     "address": "Публичный адрес до записи и полный адрес после подтверждения.",
     "schedule": "Короткие подписи и витринные тексты для расписания.",
     "other": "Главная, портфолио, отпуск и прочие служебные экраны.",
 }
+
 
 @dataclass(frozen=True, slots=True)
 class TemplateGroup:
@@ -165,8 +164,8 @@ TEMPLATE_GROUPS_BY_CATEGORY: dict[str, tuple[TemplateGroup, ...]] = {
             key="navigation",
             title="📍 Адрес и навигация",
             summary=(
-                "Картинка меняется в пункте публичного адреса. Полный адрес "
-                "подставляется текстом в подтверждения и напоминания."
+                "Публичный и полный адрес редактируются отдельно. В каждом пункте "
+                "показывается именно та картинка, которую увидит клиентка."
             ),
             template_keys=("navigation_public", "navigation", "address_post_confirm"),
         ),
@@ -225,14 +224,21 @@ def build_template_image_block(template_key: str) -> str:
     definition = get_template_definition(template_key)
     if definition is None or not definition.supports_media:
         return "🖼 Картинка: не используется"
-    source = template_media_source(template_key)
+    media_key = get_template_media_key(template_key)
+    source = template_media_source(media_key)
     if source == "uploaded":
-        return "🖼 Картинка: своя, загружена через админку"
-    if source == "bundled":
-        return "🖼 Картинка: стандартная, уже показывается клиенткам"
-    if has_bundled_template_media(template_key):
-        return "🖼 Картинка: отключена · стандартную можно вернуть"
-    return "🖼 Картинка: можно добавить"
+        status = "🖼 Картинка: своя, загружена через админку"
+    elif source == "bundled":
+        status = "🖼 Картинка: стандартная, уже показывается клиенткам"
+    elif has_bundled_template_media(media_key):
+        status = "🖼 Картинка: отключена · стандартную можно вернуть"
+    else:
+        status = "🖼 Картинка: можно добавить"
+    if media_key != template_key:
+        owner = get_template_definition(media_key)
+        owner_title = owner.title if owner is not None else media_key
+        status += f"\n↔ Общая с шаблоном «{owner_title}»"
+    return status
 
 
 def list_template_groups(category_key: str) -> tuple[TemplateGroup, ...]:
@@ -250,10 +256,7 @@ def _list_visible_template_groups(category_key: str) -> tuple[TemplateGroup, ...
     return tuple(
         group
         for group in list_template_groups(category_key)
-        if any(
-            key not in HIDDEN_TEMPLATE_KEYS
-            for key in group.template_keys
-        )
+        if any(key not in HIDDEN_TEMPLATE_KEYS for key in group.template_keys)
     )
 
 
@@ -314,11 +317,7 @@ def _collect_template_placeholder_warnings(
     definition = get_template_definition(template_key)
     if definition is None:
         return [], []
-    found_tokens = {
-        token
-        for token in _find_template_placeholder_tokens(content)
-        if token
-    }
+    found_tokens = {token for token in _find_template_placeholder_tokens(content) if token}
     required_tokens = set(
         definition.variables
         if definition.required_variables is None
@@ -412,12 +411,15 @@ def resolve_template_detail_back_callback(template_key: str) -> str:
     group_key = resolve_template_group_key(definition.category_key, definition.key)
     if group_key is None:
         return "admin_templates:home"
-    if len(
-        list_template_definitions_for_group(
-            category_key=definition.category_key,
-            group_key=group_key,
+    if (
+        len(
+            list_template_definitions_for_group(
+                category_key=definition.category_key,
+                group_key=group_key,
+            )
         )
-    ) > 1:
+        > 1
+    ):
         return f"admin_templates:group:{definition.category_key}:{group_key}"
     return resolve_template_group_back_callback(definition.category_key)
 
@@ -433,15 +435,9 @@ def build_template_meta_line(
 ) -> str:
     """Build one compact metadata line for category and detail screens."""
     status_label = (
-        "свой текст"
-        if current_content.strip() != default_content.strip()
-        else "по умолчанию"
+        "свой текст" if current_content.strip() != default_content.strip() else "по умолчанию"
     )
-    variable_label = (
-        f"{variable_count} перем."
-        if variable_count
-        else "без переменных"
-    )
+    variable_label = f"{variable_count} перем." if variable_count else "без переменных"
     if not supports_media:
         media_label = "только текст"
     elif media_source == "uploaded":
@@ -521,13 +517,14 @@ async def build_template_group_text(
             definition.key,
             definition.default_content,
         )
+        media_key = get_template_media_key(definition.key)
         meta_line = build_template_meta_line(
             current_content=current_content,
             default_content=definition.default_content,
             variable_count=len(definition.variables),
             supports_media=definition.supports_media,
-            media_source=template_media_source(definition.key),
-            has_bundled_media=has_bundled_template_media(definition.key),
+            media_source=template_media_source(media_key),
+            has_bundled_media=has_bundled_template_media(media_key),
         )
         lines.extend(
             [
@@ -555,13 +552,14 @@ async def build_template_detail_text(
         definition.key,
         definition.default_content,
     )
+    media_key = get_template_media_key(definition.key)
     meta_line = build_template_meta_line(
         current_content=content,
         default_content=definition.default_content,
         variable_count=len(definition.variables),
         supports_media=definition.supports_media,
-        media_source=template_media_source(definition.key),
-        has_bundled_media=has_bundled_template_media(definition.key),
+        media_source=template_media_source(media_key),
+        has_bundled_media=has_bundled_template_media(media_key),
     )
     text = texts.ADMIN_TEMPLATE_DETAIL_TEXT.format(
         title=definition.title,
@@ -575,9 +573,9 @@ async def build_template_detail_text(
         definition.key,
         resolve_template_detail_back_callback(definition.key),
         supports_media=definition.supports_media,
-        has_media=has_template_media(definition.key),
-        has_bundled_media=has_bundled_template_media(definition.key),
-        uses_bundled_media=template_media_source(definition.key) == "bundled",
+        has_media=has_template_media(media_key),
+        has_bundled_media=has_bundled_template_media(media_key),
+        uses_bundled_media=template_media_source(media_key) == "bundled",
         has_custom_text=content.strip() != definition.default_content.strip(),
     )
     return text, reply_markup
@@ -585,9 +583,13 @@ async def build_template_detail_text(
 
 def build_template_detail_media(template_key: str) -> tuple[bytes, str] | None:
     """Return the attached image bytes for a template detail card."""
-    if not has_template_media(template_key):
+    definition = get_template_definition(template_key)
+    if definition is None or not definition.supports_media:
         return None
-    path = template_media_path(template_key)
+    media_key = get_template_media_key(template_key)
+    if not has_template_media(media_key):
+        return None
+    path = template_media_path(media_key)
     return path.read_bytes(), path.name
 
 
@@ -749,10 +751,19 @@ def build_template_image_prompt_text(template_key: str) -> str:
     """Render a contextual prompt for updating one template image."""
     definition = get_template_definition(template_key)
     title = definition.title if definition is not None else "Шаблон"
+    shared_note = ""
+    media_key = get_template_media_key(template_key)
+    if media_key != template_key:
+        owner = get_template_definition(media_key)
+        owner_title = owner.title if owner is not None else media_key
+        shared_note = (
+            f"\n\nКартинка общая с шаблоном «{owner_title}»: "
+            "изменение сразу появится в обоих местах."
+        )
     return (
         f"🖼 {title}\n\n"
         "Пришли новую картинку для этого шаблона.\n"
-        "Подойдёт фото или файл-изображение 🌸"
+        f"Подойдёт фото или файл-изображение 🌸{shared_note}"
     )
 
 
@@ -1257,7 +1268,7 @@ async def preview_template_image(
         await callback.answer(texts.ADMIN_ONLY_TEXT, show_alert=True)
         return
     template_key = callback.data.rsplit(":", 1)[-1]
-    if not has_template_media(template_key):
+    if not has_template_media(get_template_media_key(template_key)):
         await callback.answer(texts.ADMIN_TEMPLATE_IMAGE_MISSING_ALERT_TEXT, show_alert=True)
         return
     await callback.answer(texts.ADMIN_TEMPLATE_IMAGE_ALREADY_VISIBLE_TEXT)
@@ -1277,7 +1288,7 @@ async def remove_template_image_callback(
         return
     await callback.answer()
     template_key = callback.data.rsplit(":", 1)[-1]
-    remove_template_media(template_key)
+    remove_template_media(get_template_media_key(template_key))
     if callback.message is not None:
         await show_template_detail(
             callback.message,
@@ -1301,7 +1312,7 @@ async def restore_template_image_callback(
         await callback.answer(texts.ADMIN_ONLY_TEXT, show_alert=True)
         return
     template_key = callback.data.rsplit(":", 1)[-1]
-    if not restore_bundled_template_media(template_key):
+    if not restore_bundled_template_media(get_template_media_key(template_key)):
         await callback.answer(texts.ADMIN_TEMPLATE_IMAGE_MISSING_ALERT_TEXT, show_alert=True)
         return
     await callback.answer("Стандартная картинка возвращена")
@@ -1616,7 +1627,7 @@ async def save_template_image_content(
         return
 
     try:
-        save_template_media(template_key, image_bytes)
+        save_template_media(get_template_media_key(template_key), image_bytes)
     except Exception:
         logger.exception("failed to persist template image key=%s", template_key)
         await message.answer(texts.ADMIN_TEMPLATE_IMAGE_NOT_PHOTO_TEXT)

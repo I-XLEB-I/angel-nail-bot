@@ -12,9 +12,14 @@ MASTER_TELEGRAM_USERNAME_SETTING_KEY = "master_telegram_username"
 DEFAULT_MASTER_TELEGRAM_USERNAME = "ny_pip"
 ANGELA_CHAT_DEFAULT_TEXT = "Здравствуйте, хочу уточнить по поводу записи на Маникюр 🌸"
 PORTFOLIO_CUSTOM_EMOJI_ID = "5370607250731718891"
-DEFAULT_ADDRESS_MAP_URL = (
+LEGACY_DEFAULT_ADDRESS_MAP_URL = (
     "https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/"
     "Z04YcgFhTkEFQFtvfXp4dXtqbQ==/?indoorLevel=1&ll=37.461811%2C55.694677&z=17.96"
+)
+DEFAULT_ADDRESS_MAP_URL = (
+    "https://yandex.ru/maps/213/moscow/search/"
+    "%D0%9E%D1%87%D0%B0%D0%BA%D0%BE%D0%B2%D1%81%D0%BA%D0%BE%D0%B5%20"
+    "%D1%88%D0%BE%D1%81%D1%81%D0%B5%205%D0%BA4/"
 )
 
 BUTTON_STYLE_DEFAULT = "default"
@@ -89,9 +94,7 @@ class ClientMenuButtonConfig:
 
     def normalized(self) -> ClientMenuButtonConfig:
         style_name = (
-            self.style_name
-            if self.style_name in BUTTON_STYLE_VALUES
-            else BUTTON_STYLE_DEFAULT
+            self.style_name if self.style_name in BUTTON_STYLE_VALUES else BUTTON_STYLE_DEFAULT
         )
         icon = self.icon_custom_emoji_id or None
         url = (self.url or "").strip() or None
@@ -392,6 +395,8 @@ def _decode_button_config(
     url = payload.get("url")
     if url is not None:
         url = str(url).strip() or None
+    if definition.key == "open_map" and url == LEGACY_DEFAULT_ADDRESS_MAP_URL:
+        url = DEFAULT_ADDRESS_MAP_URL
     return ClientMenuButtonConfig(
         text=text,
         style_name=style_name,

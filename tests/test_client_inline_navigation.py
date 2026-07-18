@@ -182,6 +182,37 @@ async def test_show_address_replaces_current_message_in_place() -> None:
 
 
 @pytest.mark.asyncio
+async def test_address_screen_normalizes_previous_studio_building() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        await TemplateRepository(session).upsert(
+            key="navigation_public",
+            content="📍 АДРЕС\n\nОчаковское шоссе, 5к3, подъезд 2",
+        )
+        await SettingRepository(session).upsert(
+            key="studio_address_copy_text",
+            value="Очаковское шоссе, 5к3, подъезд 2",
+        )
+        await session.commit()
+
+        callback = FakeCallback()
+        await address_handler.show_address(callback, db_session=session)
+
+        caption = str(callback.message.media_edits[0]["caption"])
+        assert "Очаковское шоссе, 5к4" in caption
+        assert "5к3" not in caption
+        copy_button = callback.message.media_edits[0]["reply_markup"].inline_keyboard[1][0]
+        assert copy_button.copy_text.text == "Очаковское шоссе, 5к4, подъезд 2"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_show_portfolio_replaces_current_message_in_place() -> None:
     settings = build_settings()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")

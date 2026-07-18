@@ -38,6 +38,7 @@ class TemplateDefinition:
     variables: tuple[str, ...] = field(default_factory=tuple)
     required_variables: tuple[str, ...] | None = None
     supports_media: bool = False
+    media_key: str | None = None
 
 
 TEMPLATE_CATEGORIES: tuple[TemplateCategory, ...] = (
@@ -53,8 +54,8 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         key="booking_confirm",
         title="✅ Подтверждение записи",
         description=(
-            "Сразу после записи клиентки; картинка статичная, поэтому адрес "
-            "на ней меняется отдельно"
+            "Сразу после записи клиентки; эту же картинку можно менять в пункте "
+            "«Полный адрес после записи»"
         ),
         category_key="clients",
         default_content=texts.DEFAULT_BOOKING_CONFIRM_TEMPLATE,
@@ -205,8 +206,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         key="repair_not_warranty",
         title="🛠 Ремонт / гарантия — не гарантия",
         description=(
-            "Мягкий текст, когда случай не попадает под гарантию "
-            "и требует ручного согласования"
+            "Мягкий текст, когда случай не попадает под гарантию и требует ручного согласования"
         ),
         category_key="clients",
         default_content=texts.DEFAULT_REPAIR_NOT_WARRANTY_TEMPLATE,
@@ -232,8 +232,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         key="navigation",
         title="📍 Адрес (после записи)",
         description=(
-            "Скрытый legacy-шаблон адреса после записи; клиенткам обычно "
-            "не показывается напрямую"
+            "Скрытый legacy-шаблон адреса после записи; клиенткам обычно не показывается напрямую"
         ),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_POST_CONFIRM,
@@ -243,9 +242,7 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="navigation_public",
         title="📍 Публичный адрес + картинка",
-        description=(
-            "Показывается до записи: отдельный экран с публичным текстом и картинкой"
-        ),
+        description=("Показывается до записи: отдельный экран с публичным текстом и картинкой"),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE,
         variables=(),
@@ -253,14 +250,16 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     ),
     TemplateDefinition(
         key="address_post_confirm",
-        title="🔐 Полный адрес — только текст",
+        title="🔐 Полный адрес после записи + картинка",
         description=(
-            "Текст полного адреса для подтверждения и напоминания; картинка "
-            "редактируется в шаблоне «Подтверждение записи»"
+            "Полный адрес для подтверждения и напоминания; здесь редактируется "
+            "та же картинка, которую клиентка видит после записи"
         ),
         category_key="address",
         default_content=texts.DEFAULT_ADDRESS_POST_CONFIRM,
         variables=(),
+        supports_media=True,
+        media_key="booking_confirm",
     ),
     TemplateDefinition(
         key="schedule_caption_text",
@@ -320,10 +319,15 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
     TemplateDefinition(
         key="portfolio_intro",
         title="Портфолио",
-        description="Текст на объединённом экране «О Ангеле»; картинка задаётся соседним шаблоном",
+        description=(
+            "Текст на объединённом экране «О Ангеле»; здесь можно менять и общую "
+            "картинку этого экрана"
+        ),
         category_key="other",
         default_content=texts.PORTFOLIO_INTRO,
         variables=(),
+        supports_media=True,
+        media_key="about_master",
     ),
     TemplateDefinition(
         key="about_master",
@@ -364,6 +368,14 @@ def get_template_definition(key: str) -> TemplateDefinition | None:
         if definition.key == key:
             return definition
     return None
+
+
+def get_template_media_key(key: str) -> str:
+    """Return the media owner used by the client-facing template screen."""
+    definition = get_template_definition(key)
+    if definition is None:
+        return key
+    return definition.media_key or definition.key
 
 
 def required_template_defaults() -> dict[str, str]:

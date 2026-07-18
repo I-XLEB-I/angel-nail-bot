@@ -7,7 +7,13 @@ from src.bot.handlers.admin import button_edit as button_edit_handler
 from src.bot.states import AdminButtonEdit
 from src.db.base import Base
 from src.db.repositories.settings import SettingRepository
-from src.services.button_configs import build_angela_chat_url, load_button_config, load_master_contact_url
+from src.services.button_configs import (
+    DEFAULT_ADDRESS_MAP_URL,
+    LEGACY_DEFAULT_ADDRESS_MAP_URL,
+    build_angela_chat_url,
+    load_button_config,
+    load_master_contact_url,
+)
 
 
 class FakeState:
@@ -56,6 +62,35 @@ class FakeCallback:
     async def answer(self, text: str | None = None, **kwargs) -> None:
         del kwargs
         self.answers.append(text)
+
+
+@pytest.mark.asyncio
+async def test_legacy_default_map_url_moves_to_current_address() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        repository = SettingRepository(session)
+        await repository.upsert(
+            key="button_config.client_repeated.open_map",
+            value=(
+                '{"text":"Открыть карту","style_name":"primary",'
+                f'"url":"{LEGACY_DEFAULT_ADDRESS_MAP_URL}"}}'
+            ),
+        )
+        await session.commit()
+
+        config = await load_button_config(
+            repository,
+            editor_id="client_repeated.open_map",
+        )
+
+        assert config.url == DEFAULT_ADDRESS_MAP_URL
+
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -193,9 +228,7 @@ async def test_save_button_emoji_persists_override(monkeypatch) -> None:
     async with session_factory() as session:
         state = FakeState()
         await state.update_data(**{button_edit_handler.BUTTON_EDITOR_ID_STATE: "common.back"})
-        message = FakeMessage(
-            entities=[FakeEntity(type="custom_emoji", custom_emoji_id="999888")]
-        )
+        message = FakeMessage(entities=[FakeEntity(type="custom_emoji", custom_emoji_id="999888")])
         shown: dict[str, object] = {}
 
         async def fake_show_detail(message_obj, state_obj, *, repository, editor_id) -> None:

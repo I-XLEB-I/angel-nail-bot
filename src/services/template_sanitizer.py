@@ -176,6 +176,8 @@ def normalize_template_content(key: str, content: str | None, default: str) -> s
         and stripped == LEGACY_ADDRESS_POST_CONFIRM_WITH_INLINE_MAP.strip()
     ):
         return texts.DEFAULT_ADDRESS_POST_CONFIRM
+    if key in {"navigation_public", "address_post_confirm"}:
+        return content.replace("Очаковское шоссе, 5к3", "Очаковское шоссе, 5к4")
 
     for snippet in PLACEHOLDER_SNIPPETS.get(key, ()):
         if snippet in content:

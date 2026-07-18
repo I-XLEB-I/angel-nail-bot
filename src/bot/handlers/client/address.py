@@ -13,6 +13,7 @@ from src.services.studio_address import (
     DEFAULT_STUDIO_ADDRESS_COPY_TEXT,
     load_studio_address_copy_text,
 )
+from src.services.template_sanitizer import normalize_template_content
 
 router = Router(name="client_address")
 ADDRESS_COPY_TEXT = DEFAULT_STUDIO_ADDRESS_COPY_TEXT
@@ -22,8 +23,12 @@ ADDRESS_MAP_URL = DEFAULT_ADDRESS_MAP_URL
 async def build_public_address_text(db_session: AsyncSession) -> str:
     """Return the public address text used before booking is confirmed."""
     repository = TemplateRepository(db_session)
-    return await repository.get_content_or_default(
+    return normalize_template_content(
         "navigation_public",
+        await repository.get_content_or_default(
+            "navigation_public",
+            texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE,
+        ),
         texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE,
     )
 
@@ -31,8 +36,12 @@ async def build_public_address_text(db_session: AsyncSession) -> str:
 async def build_address_text(db_session: AsyncSession) -> str:
     """Return the private post-booking address text with detailed navigation."""
     repository = TemplateRepository(db_session)
-    return await repository.get_content_or_default(
+    return normalize_template_content(
         "address_post_confirm",
+        await repository.get_content_or_default(
+            "address_post_confirm",
+            texts.DEFAULT_ADDRESS_POST_CONFIRM,
+        ),
         texts.DEFAULT_ADDRESS_POST_CONFIRM,
     )
 

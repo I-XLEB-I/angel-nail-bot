@@ -70,12 +70,38 @@ def test_template_image_block_distinguishes_bundled_and_uploaded(monkeypatch) ->
     )
     monkeypatch.setattr(templates_handler, "has_bundled_template_media", lambda key: True)
 
-    assert "стандартная" in templates_handler.build_template_image_block(
-        "navigation_public"
-    )
-    assert "загружена через админку" in templates_handler.build_template_image_block(
-        "price"
-    )
+    assert "стандартная" in templates_handler.build_template_image_block("navigation_public")
+    assert "загружена через админку" in templates_handler.build_template_image_block("price")
+
+
+def test_full_address_uses_booking_confirmation_media(monkeypatch) -> None:
+    requested_keys: list[str] = []
+
+    def fake_media_source(key: str) -> str:
+        requested_keys.append(key)
+        return "uploaded"
+
+    monkeypatch.setattr(templates_handler, "template_media_source", fake_media_source)
+    monkeypatch.setattr(templates_handler, "has_bundled_template_media", lambda key: False)
+
+    image_block = templates_handler.build_template_image_block("address_post_confirm")
+
+    assert requested_keys == ["booking_confirm"]
+    assert "загружена через админку" in image_block
+    assert "Общая с шаблоном «✅ Подтверждение записи»" in image_block
+
+
+def test_full_address_image_prompt_explains_shared_media() -> None:
+    prompt = templates_handler.build_template_image_prompt_text("address_post_confirm")
+
+    assert "Картинка общая с шаблоном «✅ Подтверждение записи»" in prompt
+    assert "изменение сразу появится в обоих местах" in prompt
+
+
+def test_text_only_template_never_renders_stray_media(monkeypatch) -> None:
+    monkeypatch.setattr(templates_handler, "has_template_media", lambda key: True)
+
+    assert templates_handler.build_template_detail_media("schedule_caption_text") is None
 
 
 class FakeCallback:
@@ -250,7 +276,7 @@ async def test_open_single_group_category_skips_transition_screen() -> None:
         assert markup is not None
         labels = [button.text for row in markup.inline_keyboard for button in row]
         assert "📍 Публичный адрес + картинка" in labels
-        assert "🔐 Полный адрес — только текст" in labels
+        assert "🔐 Полный адрес после записи + картинка" in labels
         assert markup.inline_keyboard[-2][0].callback_data == "admin_templates:home"
 
     await engine.dispose()
@@ -494,6 +520,63 @@ async def test_show_template_detail_with_media_sends_photo_panel(tmp_path, monke
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_full_address_detail_shows_booking_confirmation_media(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        media_path = tmp_path / "booking_confirm.jpg"
+        media_path.write_bytes(b"full-address-image")
+        requested_keys: list[str] = []
+
+        def fake_has_media(key: str) -> bool:
+            requested_keys.append(key)
+            return key == "booking_confirm"
+
+        monkeypatch.setattr(templates_handler, "has_template_media", fake_has_media)
+        monkeypatch.setattr(
+            templates_handler,
+            "template_media_path",
+            lambda key: media_path,
+        )
+        monkeypatch.setattr(
+            templates_handler,
+            "template_media_source",
+            lambda key: "uploaded" if key == "booking_confirm" else None,
+        )
+        monkeypatch.setattr(
+            templates_handler,
+            "has_bundled_template_media",
+            lambda key: False,
+        )
+
+        message = FakeMessage()
+        await templates_handler.show_template_detail(
+            message,
+            db_session=session,
+            template_key="address_post_confirm",
+            edit=False,
+            state=None,
+        )
+
+        assert message.photos
+        assert "Полный адрес после записи + картинка" in (message.photos[0][1] or "")
+        labels = [button.text for row in message.photos[0][2].inline_keyboard for button in row]
+        assert "🖼 Заменить картинку" in labels
+        assert "🗑 Удалить картинку" in labels
+        assert "booking_confirm" in requested_keys
+        assert "address_post_confirm" not in requested_keys
+
+    await engine.dispose()
+
+
 class _FakeBuffer:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
@@ -606,6 +689,90 @@ async def test_save_template_image_content_accepts_photo(monkeypatch) -> None:
     assert upsert_calls[0]["caption"].startswith(
         templates_handler.texts.ADMIN_TEMPLATE_IMAGE_SAVED_TEXT
     )
+
+
+@pytest.mark.asyncio
+async def test_full_address_image_upload_updates_booking_confirmation_media(
+    monkeypatch,
+) -> None:
+    saved: list[tuple[str, bytes]] = []
+    monkeypatch.setattr(
+        templates_handler,
+        "save_template_media",
+        lambda key, content: saved.append((key, content)) or None,
+    )
+
+    async def fake_refresh(*args, **kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(templates_handler, "refresh_template_detail_panel", fake_refresh)
+
+    message = FakeUploadMessage(photo=[_FakePhotoSize()])
+    state = FakeState()
+    await state.update_data(
+        admin_template_key="address_post_confirm",
+        admin_template_category="address",
+    )
+
+    await templates_handler.save_template_image_content(
+        message,
+        state,
+        db_session=None,
+    )
+
+    assert saved == [("booking_confirm", b"fake-bytes")]
+
+
+@pytest.mark.asyncio
+async def test_full_address_image_remove_targets_booking_confirmation_media(
+    monkeypatch,
+) -> None:
+    removed: list[str] = []
+
+    async def fake_show_detail(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        templates_handler,
+        "remove_template_media",
+        lambda key: removed.append(key) or True,
+    )
+    monkeypatch.setattr(templates_handler, "show_template_detail", fake_show_detail)
+
+    await templates_handler.remove_template_image_callback(
+        FakeCallback("admin_templates:remove_image:address_post_confirm"),
+        FakeState(),
+        is_admin=True,
+        db_session=None,
+    )
+
+    assert removed == ["booking_confirm"]
+
+
+@pytest.mark.asyncio
+async def test_full_address_image_restore_targets_booking_confirmation_media(
+    monkeypatch,
+) -> None:
+    restored: list[str] = []
+
+    async def fake_show_detail(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        templates_handler,
+        "restore_bundled_template_media",
+        lambda key: restored.append(key) or True,
+    )
+    monkeypatch.setattr(templates_handler, "show_template_detail", fake_show_detail)
+
+    await templates_handler.restore_template_image_callback(
+        FakeCallback("admin_templates:restore_image:address_post_confirm"),
+        FakeState(),
+        is_admin=True,
+        db_session=None,
+    )
+
+    assert restored == ["booking_confirm"]
 
 
 @pytest.mark.asyncio
@@ -774,9 +941,7 @@ async def test_save_template_image_content_rejects_text_and_keeps_state() -> Non
     )
 
     assert message.answers
-    assert message.answers[0][0] == (
-        templates_handler.texts.ADMIN_TEMPLATE_IMAGE_NOT_PHOTO_TEXT
-    )
+    assert message.answers[0][0] == (templates_handler.texts.ADMIN_TEMPLATE_IMAGE_NOT_PHOTO_TEXT)
     assert state.cleared is False
     assert state.state == templates_handler.AdminTemplateEdit.await_image
 
@@ -825,6 +990,7 @@ async def test_show_template_detail_with_long_media_text_splits_into_panel_and_a
 
     monkeypatch.setattr(templates_handler, "send_admin_panel", fake_send_admin_panel)
     monkeypatch.setattr(templates_handler, "send_admin_aux_photo", fake_send_admin_aux_photo)
+
     async def fake_ensure_required_templates(_db_session) -> None:
         return None
 
