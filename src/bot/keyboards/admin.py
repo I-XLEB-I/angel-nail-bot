@@ -46,33 +46,39 @@ def nav_button(text: str, callback_data: str) -> InlineKeyboardButton:
     )
 
 
-def build_admin_main_menu(*, pending_approvals: int) -> ReplyKeyboardMarkup:
+def build_admin_main_menu(
+    *,
+    pending_approvals: int,
+    rich_messages_test_enabled: bool = False,
+) -> ReplyKeyboardMarkup:
     """Build the main admin reply keyboard."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📅 Расписание"), KeyboardButton(text="📋 Все записи")],
-            [KeyboardButton(text="🗓 Статусы на сегодня")],
-            [
-                KeyboardButton(text=f"📥 Запросы ({pending_approvals})"),
-                KeyboardButton(text="💼 Услуги"),
-            ],
-            [
-                KeyboardButton(text="👥 Клиенты"),
-                KeyboardButton(text="📊 Статистика"),
-            ],
-            [KeyboardButton(text="✉️ Рассылка")],
+    keyboard = [
+        [KeyboardButton(text="📅 Расписание"), KeyboardButton(text="📋 Все записи")],
+        [KeyboardButton(text="🗓 Статусы на сегодня")],
+        [
+            KeyboardButton(text=f"📥 Запросы ({pending_approvals})"),
+            KeyboardButton(text="💼 Услуги"),
+        ],
+        [
+            KeyboardButton(text="👥 Клиенты"),
+            KeyboardButton(text="📊 Статистика"),
+        ],
+        [KeyboardButton(text="✉️ Рассылка")],
+    ]
+    if rich_messages_test_enabled:
+        keyboard.append([KeyboardButton(text="🧪 Rich тест")])
+    keyboard.extend(
+        [
             [
                 KeyboardButton(text="📝 Шаблоны"),
                 KeyboardButton(text="⚙️ Настройки"),
             ],
             [KeyboardButton(text="🎛 Кнопки"), KeyboardButton(text="✨ Emoji ID")],
-            [
-                KeyboardButton(text="➕ Ручная запись"),
-            ],
+            [KeyboardButton(text="➕ Ручная запись")],
             [KeyboardButton(text="🙈 Режим клиента")],
-        ],
-        resize_keyboard=True,
+        ]
     )
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def build_admin_all_bookings_keyboard(
@@ -2434,7 +2440,10 @@ ADMIN_SETTINGS_SECTIONS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
     ),
     "appearance": (
         "🎨 Внешний вид",
-        (("Картинка расписания", "admin_settings:toggle:schedule_image_enabled"),),
+        (
+            ("Картинка расписания", "admin_settings:toggle:schedule_image_enabled"),
+            ("Rich test sandbox", "admin_settings:toggle:rich_messages_test_enabled"),
+        ),
     ),
     "limits": (
         "🔒 Интеграции и лимиты",
@@ -2495,5 +2504,60 @@ def build_admin_settings_edit_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [nav_button("⬅️ Отмена", "admin_settings:cancel_edit")],
             [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
+    )
+
+
+def build_admin_rich_test_keyboard() -> InlineKeyboardMarkup:
+    """Build the admin-only rich sandbox actions."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🖼 Rich прайс-превью",
+                    callback_data="admin_rich_test:price_preview",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✉️ Тест-рассылка",
+                    callback_data="admin_rich_test:broadcast",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ],
+            [nav_button("⬅️ В меню", "admin_menu:home")],
+        ]
+    )
+
+
+def build_admin_rich_test_input_keyboard() -> InlineKeyboardMarkup:
+    """Build controls while waiting for a test source message."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [nav_button("⬅️ Отмена", "admin_rich_test:cancel_input")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
+    )
+
+
+def build_admin_rich_test_preview_keyboard() -> InlineKeyboardMarkup:
+    """Build confirmation controls for the copied test preview."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Отправить тест",
+                    callback_data="admin_rich_test:broadcast_confirm",
+                    style=ButtonStyle.SUCCESS,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="admin_rich_test:broadcast_cancel",
+                    style=ButtonStyle.DANGER,
+                )
+            ],
         ]
     )

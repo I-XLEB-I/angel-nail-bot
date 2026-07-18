@@ -9,7 +9,7 @@ description = "Telegram bot for ANGELS NAIL SPACE."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "aiogram>=3.26.0,<4.0",
+  "aiogram>=3.30.0,<4.0",
   "aiosqlite>=0.20,<1.0",
   "alembic>=1.13,<2.0",
   "apscheduler>=3.10,<4.0",

@@ -26,7 +26,7 @@ from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.morning_summary import send_live_morning_summary_to_admin
-from src.services.runtime_settings import get_runtime_tz
+from src.services.runtime_settings import get_bool_setting, get_runtime_tz
 from src.services.template_texts import render_named_template
 
 router = Router(name="admin_menu")
@@ -51,6 +51,11 @@ async def show_admin_menu(
         local_day=local_today,
         tz_name=tz_name,
     )
+    rich_messages_test_enabled = await get_bool_setting(
+        settings_repository,
+        key="rich_messages_test_enabled",
+        default=False,
+    )
 
     text = await render_named_template(
         template_repository,
@@ -60,7 +65,10 @@ async def show_admin_menu(
             "today_bookings": str(today_bookings),
         },
     )
-    markup = build_admin_main_menu(pending_approvals=pending_approvals)
+    markup = build_admin_main_menu(
+        pending_approvals=pending_approvals,
+        rich_messages_test_enabled=rich_messages_test_enabled,
+    )
     brand_image_bytes = load_brand_image_bytes()
     if state is not None:
         if brand_image_bytes is not None:

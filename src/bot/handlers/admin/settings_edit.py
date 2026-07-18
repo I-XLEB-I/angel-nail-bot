@@ -57,6 +57,7 @@ SETTING_TITLES = {
     "repair_warranty_nails_limit": "Гарантия на ремонт (ногтей)",
     "repair_request_window_days": "Окно заявки на ремонт (дни)",
     "repair_default_duration_min": "Длительность гарантийного ремонта",
+    "rich_messages_test_enabled": "Rich test sandbox",
 }
 
 SETTING_PROMPTS = {
@@ -161,6 +162,11 @@ async def render_settings_text(db_session: AsyncSession, settings: Settings) -> 
     schedule_image_enabled = await get_bool_setting(
         repository,
         key="schedule_image_enabled",
+        default=False,
+    )
+    rich_messages_test_enabled = await get_bool_setting(
+        repository,
+        key="rich_messages_test_enabled",
         default=False,
     )
     min_days_between_bookings = await get_int_setting(
@@ -283,6 +289,7 @@ async def render_settings_text(db_session: AsyncSession, settings: Settings) -> 
             f"  Пост-визитный опрос: {humanize_bool(postvisit_enabled)}",
             f"  Repeat-prompt через: {repeat_prompt_weeks} нед",
             f"  Картинка расписания: {humanize_bool(schedule_image_enabled)}",
+            f"  Rich test sandbox: {humanize_bool(rich_messages_test_enabled)}",
             f"  Порог опоздания: {late_notice_warning_minutes} мин",
             "",
             "🛡 Anti-abuse",

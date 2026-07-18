@@ -128,6 +128,13 @@ class AdminBroadcast(StatesGroup):
     input_text = State()
 
 
+class AdminRichTest(StatesGroup):
+    """Admin-only rich message sandbox."""
+
+    await_broadcast_source = State()
+    confirm_broadcast = State()
+
+
 class AdminTemplateEdit(StatesGroup):
     """Admin editable-template flow."""
 

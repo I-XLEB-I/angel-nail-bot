@@ -477,6 +477,12 @@ def editable_setting_definitions(settings: Settings) -> list[SettingDefinition]:
             default_value="false",
         ),
         SettingDefinition(
+            key="rich_messages_test_enabled",
+            label="Rich test sandbox",
+            kind="bool",
+            default_value="false",
+        ),
+        SettingDefinition(
             key="late_notice_warning_minutes",
             label="Порог предупреждения об опоздании (мин)",
             kind="int",

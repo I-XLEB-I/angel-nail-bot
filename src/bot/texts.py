@@ -885,6 +885,50 @@ ADMIN_BROADCAST_REPORT_TEXT = """✨ РАССЫЛКА ЗАВЕРШЕНА
 ┣ Заблокировали / удалили: {blocked}
 ┗ Ошибки: {failed}"""
 
+ADMIN_RICH_TEST_DISABLED_TEXT = "Rich sandbox сейчас выключен в настройках 🤍"
+ADMIN_RICH_TEST_HOME_TEXT = """🧪 RICH ТЕСТ
+
+Это безопасный sandbox: ничего не уходит клиенткам.
+
+Получатели тест-рассылки: {count} админ(а/ов).
+
+Можно:
+• посмотреть rich-превью прайса
+• отправить тестовую rich-рассылку только на админов"""
+ADMIN_RICH_TEST_PRICE_SENT_TEXT = "Rich-превью прайса отправила ниже ✨"
+ADMIN_RICH_TEST_BROADCAST_PROMPT_TEXT = """🧪 ТЕСТ-РАССЫЛКА
+
+Пришли одно сообщение в том виде, как его увидят тестовые получатели.
+
+Подходит:
+• обычный текст
+• rich message
+• фото / видео / документ / аудио / голосовое с подписью
+
+Не подходит:
+• альбом
+• сервисные сообщения
+• медиа без подписи"""
+ADMIN_RICH_TEST_UNSUPPORTED_MESSAGE_TEXT = (
+    "Для теста пришли одно copyable-сообщение: текст, rich message или медиа с подписью. "
+    "Альбомы и сервисные сообщения пока не поддерживаются 🤍"
+)
+ADMIN_RICH_TEST_PREVIEW_READY_TEXT = """🧪 ПРЕВЬЮ ГОТОВО
+
+Проверь сообщение ниже и нажми подтверждение прямо на нём."""
+ADMIN_RICH_TEST_BROADCAST_STARTED_TEXT = (
+    "Тест-рассылка запущена. Отправляю только по admin_tg_ids ✨"
+)
+ADMIN_RICH_TEST_BROADCAST_CANCELLED_TEXT = "Тест-рассылку отменила 🤍"
+ADMIN_RICH_TEST_BROADCAST_REPORT_TEXT = """🧪 ТЕСТ-РАССЫЛКА ЗАВЕРШЕНА
+
+Получатели: только admin_tg_ids
+
+┣ Доставлено: {delivered}
+┣ Заблокировали / удалили: {blocked}
+┗ Ошибки: {failed}"""
+ADMIN_RICH_TEST_NO_TARGETS_TEXT = "В ADMIN_TG_IDS пока нет получателей для теста 🤍"
+
 ADMIN_TEMPLATES_HOME_TEXT = """📝 ШАБЛОНЫ
 
 Выбери раздел 👇"""

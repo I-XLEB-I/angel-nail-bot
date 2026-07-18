@@ -21,6 +21,7 @@ from src.bot.handlers.admin.late_notices import router as admin_late_notices_rou
 from src.bot.handlers.admin.manual_booking import router as admin_manual_booking_router
 from src.bot.handlers.admin.menu import router as admin_menu_router
 from src.bot.handlers.admin.proxy_chat import router as admin_proxy_chat_router
+from src.bot.handlers.admin.rich_test import router as admin_rich_test_router
 from src.bot.handlers.admin.rescue_slots import router as admin_rescue_slots_router
 from src.bot.handlers.admin.schedule import router as admin_schedule_router
 from src.bot.handlers.admin.services_crud import router as admin_services_router
@@ -78,6 +79,7 @@ def build_application(settings: Settings) -> tuple[Bot, Dispatcher]:
     dispatcher.include_router(admin_approvals_router)
     dispatcher.include_router(admin_stats_router)
     dispatcher.include_router(admin_broadcast_router)
+    dispatcher.include_router(admin_rich_test_router)
     dispatcher.include_router(admin_templates_router)
     dispatcher.include_router(admin_settings_router)
     dispatcher.include_router(admin_proxy_chat_router)
