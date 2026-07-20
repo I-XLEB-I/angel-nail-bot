@@ -67,10 +67,12 @@ def decide_template_sync(
 
 
 def _render_diff(key: str, current: str, new_default: str) -> str:
+    current_lines = [f"{line}\n" for line in current.splitlines()]
+    default_lines = [f"{line}\n" for line in new_default.splitlines()]
     return "".join(
         unified_diff(
-            current.splitlines(keepends=True),
-            new_default.splitlines(keepends=True),
+            current_lines,
+            default_lines,
             fromfile=f"database/{key}",
             tofile=f"new-default/{key}",
         )

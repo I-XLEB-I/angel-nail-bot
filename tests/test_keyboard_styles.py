@@ -16,6 +16,7 @@ from src.bot.keyboards.admin import (
     build_admin_template_category_keyboard,
     build_admin_template_detail_keyboard,
     build_admin_template_group_keyboard,
+    build_force_majeure_day_keyboard,
     build_schedule_preview_keyboard,
     build_week_slot_keyboard,
 )
@@ -392,16 +393,13 @@ def test_confirm_keyboard_accepts_common_button_overrides() -> None:
     keyboard = build_confirm_keyboard(
         button_configs={
             "common.back": ClientMenuButtonConfig(text="◀︎ Назад", style_name="primary"),
-            "common.cancel_action": ClientMenuButtonConfig(
-                text="🛑 Сбросить",
-                style_name="default",
-            ),
         }
     )
 
     assert keyboard.inline_keyboard[1][0].text == "Назад"
     assert keyboard.inline_keyboard[1][0].style == ButtonStyle.PRIMARY
-    assert keyboard.inline_keyboard[2][0].text == "Сбросить"
+    assert keyboard.inline_keyboard[2][0].text == "Главное меню"
+    assert keyboard.inline_keyboard[2][0].callback_data == "booking:cancel"
     assert (
         keyboard.inline_keyboard[1][0].icon_custom_emoji_id
         == keyboard.inline_keyboard[2][0].icon_custom_emoji_id
@@ -620,6 +618,7 @@ def test_schedule_menu_shows_implemented_month_view_only() -> None:
     assert "🚫 Заблокировать период" not in labels
     assert "📅 На месяц" in labels
     assert "🖼 Картинка" not in labels
+    assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
 
 
 def test_settings_keyboard_has_back_to_admin_menu() -> None:
@@ -643,6 +642,14 @@ def test_admin_emoji_id_keyboard_has_back_action() -> None:
     keyboard = build_admin_emoji_id_keyboard()
 
     assert keyboard.inline_keyboard[-1][0].callback_data == "admin_emoji_id:back"
+    assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
+
+
+def test_force_majeure_exit_is_labeled_as_main_menu() -> None:
+    keyboard = build_force_majeure_day_keyboard([("Сегодня", "2026-07-20")])
+
+    assert keyboard.inline_keyboard[-1][0].callback_data == "admin_menu:home"
+    assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
 
 
 def test_settings_edit_keyboard_has_home_shortcut() -> None:
@@ -810,5 +817,7 @@ def test_base_services_cancel_uses_danger_style() -> None:
     )
 
     assert keyboard.inline_keyboard[-1][0].style == ButtonStyle.DANGER
+    assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
+    assert keyboard.inline_keyboard[-1][0].callback_data == "booking:cancel"
     assert keyboard.inline_keyboard[0][0].style == ButtonStyle.PRIMARY
     assert keyboard.inline_keyboard[0][0].text == "Маникюр"

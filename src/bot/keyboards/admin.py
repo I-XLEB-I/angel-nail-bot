@@ -30,7 +30,7 @@ from src.services.button_configs import (
     EditableButtonDefinition,
     resolve_button_style,
 )
-from src.services.rich_messages import RICH_PREVIEW_DEFINITIONS
+from src.services.rich_messages import RICH_MEDIA_DEFINITIONS, RICH_PREVIEW_DEFINITIONS
 
 SLOT_STATUS_ICONS = {
     SlotStatus.FREE: "🟢",
@@ -38,9 +38,17 @@ SLOT_STATUS_ICONS = {
     SlotStatus.BLOCKED: "⚫️",
 }
 
+ADMIN_MAIN_MENU_CALLBACKS = {
+    "admin_menu:home",
+    "admin_buttons:back",
+    "admin_emoji_id:back",
+}
+
 
 def nav_button(text: str, callback_data: str) -> InlineKeyboardButton:
     """Build a visually consistent admin back/menu/cancel button."""
+    if callback_data in ADMIN_MAIN_MENU_CALLBACKS:
+        text = "🏠 Главное меню"
     parts = text.split(" ", 1)
     normalized_text = (
         parts[1] if len(parts) == 2 and not any(char.isalnum() for char in parts[0]) else text
@@ -429,6 +437,43 @@ def build_admin_button_detail_keyboard(
             [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_admin_rich_media_keyboard(active_keys: set[str]) -> InlineKeyboardMarkup:
+    """Build image-slot management for rich previews only."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{'✅' if definition.key in active_keys else '➕'} {definition.title}",
+                callback_data=f"admin_rich_test:media:{definition.key}",
+                style=ButtonStyle.PRIMARY,
+            )
+        ]
+        for definition in RICH_MEDIA_DEFINITIONS
+    ]
+    rows.append([nav_button("⬅️ К Rich тесту", "admin_rich_test:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_admin_rich_media_input_keyboard(
+    media_key: str,
+    *,
+    has_media: bool,
+) -> InlineKeyboardMarkup:
+    """Build cancel/delete controls while waiting for one rich image."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_media:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить отдельное Rich-изображение",
+                    callback_data=f"admin_rich_test:media_remove:{media_key}",
+                    style=ButtonStyle.DANGER,
+                )
+            ]
+        )
+    rows.append([nav_button("⬅️ К изображениям", "admin_rich_test:media_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2488,6 +2533,13 @@ def build_admin_rich_test_keyboard() -> InlineKeyboardMarkup:
     ]
     rows.extend(
         [
+            [
+                InlineKeyboardButton(
+                    text="🖼 Изображения для Rich",
+                    callback_data="admin_rich_test:media_home",
+                    style=ButtonStyle.PRIMARY,
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="✉️ Тест-рассылка",

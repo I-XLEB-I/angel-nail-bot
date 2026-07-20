@@ -889,6 +889,20 @@ ADMIN_RICH_TEST_COMPARISON_SENT_TEXT = (
 )
 ADMIN_RICH_TEST_UNKNOWN_PREVIEW_TEXT = "Такого rich-превью пока нет 🤍"
 ADMIN_RICH_TEST_PREVIEW_BUTTON_TEXT = "Это безопасная демонстрационная кнопка"
+ADMIN_RICH_MEDIA_HOME_TEXT = """🖼 ИЗОБРАЖЕНИЯ ДЛЯ RICH
+
+Эти файлы используются только в rich-превью и не меняют обычные клиентские шаблоны.
+
+✅ — отдельное изображение уже загружено
+➕ — rich-превью использует безопасный запасной вариант"""
+ADMIN_RICH_MEDIA_PROMPT_TEXT = """🖼 {title}
+
+Пришли одно изображение как фото или файл.
+
+Для компактного результата лучше использовать широкий кадр. Telegram сам определит ширину блока."""
+ADMIN_RICH_MEDIA_SAVED_TEXT = "Изображение «{title}» сохранила только для Rich теста ✨"
+ADMIN_RICH_MEDIA_REMOVED_TEXT = "Отдельное изображение «{title}» удалено 🤍"
+ADMIN_RICH_MEDIA_INVALID_TEXT = "Пришли изображение как фото или графический файл до 10 МБ 🤍"
 ADMIN_RICH_TEST_BROADCAST_PROMPT_TEXT = """🧪 ТЕСТ-РАССЫЛКА
 
 Пришли одно сообщение в том виде, как его увидят тестовые получатели.

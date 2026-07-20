@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -47,6 +49,7 @@ class FakeBot:
         self.copied_messages: list[dict[str, object | None]] = []
         self.deleted_messages: list[dict[str, int]] = []
         self.sent_rich_messages: list[dict[str, object]] = []
+        self.download_bytes = b"test-image"
 
     async def edit_message_text(
         self,
@@ -111,6 +114,9 @@ class FakeBot:
     async def delete_message(self, *, chat_id: int, message_id: int) -> None:
         self.deleted_messages.append({"chat_id": chat_id, "message_id": message_id})
 
+    async def download(self, _file_object):
+        return io.BytesIO(self.download_bytes)
+
     async def send_photo(
         self,
         *,
@@ -165,12 +171,16 @@ class FakeMessage:
         content_type: str = "text",
         rich_message=None,
         media_group_id: str | None = None,
+        photo=None,
+        document=None,
     ) -> None:
         self.text = text
         self.caption = caption
         self.content_type = content_type
         self.rich_message = rich_message
         self.media_group_id = media_group_id
+        self.photo = photo
+        self.document = document
         self.bot = bot or FakeBot()
         self.chat = FakeChat()
         self.message_id = message_id
@@ -382,8 +392,50 @@ async def test_registered_preview_sends_standard_then_rich() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rich_media_upload_uses_isolated_key(monkeypatch) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    saved: dict[str, object] = {}
+
+    def fake_save_template_media(key: str, content: bytes) -> None:
+        saved["key"] = key
+        saved["content"] = content
+
+    monkeypatch.setattr(rich_test_handler, "save_template_media", fake_save_template_media)
+    monkeypatch.setattr(rich_test_handler, "has_template_media", lambda _key: False)
+
+    async with session_factory() as session:
+        await SettingRepository(session).upsert(key="rich_messages_test_enabled", value="true")
+        await session.commit()
+        bot = FakeBot()
+        state = FakeState(
+            {
+                "admin_panel_chat_id": 500,
+                "admin_panel_message_id": 77,
+                "admin_rich_media_key": "rich_price_header",
+            }
+        )
+        message = FakeMessage(bot=bot, photo=[object()])
+
+        await rich_test_handler.save_rich_media_upload(
+            message,
+            state,
+            db_session=session,
+            is_admin=True,
+        )
+
+        assert saved == {"key": "rich_price_header", "content": b"test-image"}
+        assert "только для Rich теста" in str(bot.edits[-1]["text"])
+        assert saved["key"] != "price"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_capture_rich_test_source_creates_preview_copy() -> None:
-    settings = build_settings()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 

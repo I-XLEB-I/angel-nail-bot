@@ -351,7 +351,7 @@ def navigation_rows(
     *,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
     back_text: str | None = None,
-    cancel_callback: str | None = None,
+    home_callback: str = "client_menu:back",
 ) -> list[list[InlineKeyboardButton]]:
     """Return canonical bottom navigation: back first, then direct exit."""
     return [
@@ -362,13 +362,7 @@ def navigation_rows(
                 text_override=back_text,
             )
         ],
-        [
-            (
-                cancel_back_button(cancel_callback, button_configs=button_configs)
-                if cancel_callback is not None
-                else home_button(button_configs=button_configs)
-            )
-        ],
+        [home_button(home_callback, button_configs=button_configs)],
     ]
 
 
@@ -1622,7 +1616,7 @@ def build_base_services_keyboard(
         ]
         for service in services
     ]
-    rows.append([cancel_back_button("booking:cancel", button_configs=button_configs)])
+    rows.append([home_button("booking:cancel", button_configs=button_configs)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1651,7 +1645,7 @@ def build_addons_keyboard(
         navigation_rows(
             "booking:addons_back",
             button_configs=button_configs,
-            cancel_callback="booking:cancel",
+            home_callback="booking:cancel",
         )
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1685,7 +1679,7 @@ def build_payment_method_keyboard(
             *navigation_rows(
                 "booking:payment_back",
                 button_configs=button_configs,
-                cancel_callback="booking:cancel",
+                home_callback="booking:cancel",
             ),
         ]
     )
@@ -1723,7 +1717,7 @@ def build_days_keyboard(
             *navigation_rows(
                 "booking:day_back",
                 button_configs=button_configs,
-                cancel_callback="booking:cancel",
+                home_callback="booking:cancel",
             ),
         ]
     )
@@ -1788,7 +1782,7 @@ def build_schedule_days_keyboard(
             *navigation_rows(
                 "booking:day_back",
                 button_configs=button_configs,
-                cancel_callback="booking:cancel",
+                home_callback="booking:cancel",
             ),
         ]
     )
@@ -1953,7 +1947,7 @@ def build_times_keyboard(
             *navigation_rows(
                 "booking:time_back",
                 button_configs=button_configs,
-                cancel_callback="booking:cancel",
+                home_callback="booking:cancel",
             ),
         ]
     )
@@ -2069,6 +2063,6 @@ def build_confirm_keyboard(
                 )
             ],
             [back_button("booking:confirm_back", button_configs=button_configs)],
-            [cancel_action_button("booking:cancel", button_configs=button_configs)],
+            [home_button("booking:cancel", button_configs=button_configs)],
         ]
     )

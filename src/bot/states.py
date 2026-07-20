@@ -133,6 +133,7 @@ class AdminRichTest(StatesGroup):
 
     await_broadcast_source = State()
     confirm_broadcast = State()
+    await_preview_media = State()
 
 
 class AdminTemplateEdit(StatesGroup):

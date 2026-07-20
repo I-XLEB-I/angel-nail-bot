@@ -71,6 +71,14 @@ class RichPreviewDefinition:
     builder: RichPreviewBuilder
 
 
+@dataclass(frozen=True, slots=True)
+class RichMediaDefinition:
+    """One independently managed image slot used only by rich previews."""
+
+    key: str
+    title: str
+
+
 async def is_rich_messages_test_enabled(db_session: AsyncSession) -> bool:
     """Return whether the admin-only rich sandbox is enabled."""
     return await get_bool_setting(
@@ -406,7 +414,18 @@ RICH_PREVIEW_DEFINITIONS: tuple[RichPreviewDefinition, ...] = (
     ),
 )
 
+RICH_MEDIA_DEFINITIONS: tuple[RichMediaDefinition, ...] = (
+    RichMediaDefinition("rich_price_header", "Баннер прайса"),
+    RichMediaDefinition("rich_about_inline", "Фото «Об Ангеле»"),
+    RichMediaDefinition("rich_address_landmark", "Ориентир адреса"),
+)
+
 
 def get_rich_preview_definition(key: str) -> RichPreviewDefinition | None:
     """Return one registered sandbox preview by its callback key."""
     return next((item for item in RICH_PREVIEW_DEFINITIONS if item.key == key), None)
+
+
+def get_rich_media_definition(key: str) -> RichMediaDefinition | None:
+    """Return one independently managed rich-preview image slot."""
+    return next((item for item in RICH_MEDIA_DEFINITIONS if item.key == key), None)

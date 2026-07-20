@@ -15,6 +15,8 @@ from src.bot.admin_panel import (
 )
 from src.bot.keyboards.admin import (
     build_admin_rich_comparison_keyboard,
+    build_admin_rich_media_input_keyboard,
+    build_admin_rich_media_keyboard,
     build_admin_rich_test_input_keyboard,
     build_admin_rich_test_keyboard,
     build_admin_rich_test_preview_keyboard,
@@ -22,12 +24,20 @@ from src.bot.keyboards.admin import (
 from src.bot.states import AdminRichTest
 from src.config import Settings
 from src.services.rich_messages import (
+    RICH_MEDIA_DEFINITIONS,
+    get_rich_media_definition,
     get_rich_preview_definition,
     is_rich_messages_test_enabled,
     validate_rich_test_source_message,
 )
+from src.services.template_media import (
+    has_template_media,
+    remove_template_media,
+    save_template_media,
+)
 
 router = Router(name="admin_rich_test")
+MAX_RICH_MEDIA_BYTES = 10 * 1024 * 1024
 
 
 def _test_target_ids(settings: Settings) -> list[int]:
@@ -70,6 +80,30 @@ async def _show_rich_test_home(
         state,
         text=text,
         reply_markup=build_admin_rich_test_keyboard(),
+    )
+
+
+async def _show_rich_media_home(
+    message: Message,
+    state: FSMContext,
+    *,
+    notice_text: str | None = None,
+) -> None:
+    """Show the independent media slots used only by rich previews."""
+    text = texts.ADMIN_RICH_MEDIA_HOME_TEXT
+    if notice_text:
+        text = f"{text}\n\n{notice_text}"
+    await clear_state_preserving_admin_panel(state, admin_as_client=False)
+    active_keys = {
+        definition.key
+        for definition in RICH_MEDIA_DEFINITIONS
+        if has_template_media(definition.key)
+    }
+    await send_admin_panel(
+        message,
+        state,
+        text=text,
+        reply_markup=build_admin_rich_media_keyboard(active_keys),
     )
 
 
@@ -206,6 +240,143 @@ async def send_rich_price_preview(
 async def ignore_rich_preview_action(callback: CallbackQuery) -> None:
     """Acknowledge visual-only buttons without entering client flows."""
     await callback.answer(texts.ADMIN_RICH_TEST_PREVIEW_BUTTON_TEXT)
+
+
+@router.callback_query(F.data == "admin_rich_test:media_home")
+async def show_rich_media_home(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    is_admin: bool,
+) -> None:
+    """Open independent image management for the rich sandbox."""
+    if not await _ensure_rich_test_access(
+        db_session=db_session,
+        is_admin=is_admin,
+        callback=callback,
+    ):
+        return
+    await callback.answer()
+    if callback.message is not None:
+        await _show_rich_media_home(callback.message, state)
+
+
+@router.callback_query(F.data.startswith("admin_rich_test:media:"))
+async def prompt_rich_media_upload(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    is_admin: bool,
+) -> None:
+    """Prompt for one image assigned only to a registered rich slot."""
+    if not await _ensure_rich_test_access(
+        db_session=db_session,
+        is_admin=is_admin,
+        callback=callback,
+    ):
+        return
+    await callback.answer()
+    if callback.message is None or callback.data is None:
+        return
+    media_key = callback.data.rsplit(":", 1)[-1]
+    definition = get_rich_media_definition(media_key)
+    if definition is None:
+        await callback.answer(texts.ADMIN_RICH_TEST_UNKNOWN_PREVIEW_TEXT, show_alert=True)
+        return
+    await state.set_state(AdminRichTest.await_preview_media)
+    await state.update_data(admin_rich_media_key=media_key)
+    await send_admin_panel(
+        callback.message,
+        state,
+        text=texts.ADMIN_RICH_MEDIA_PROMPT_TEXT.format(title=definition.title),
+        reply_markup=build_admin_rich_media_input_keyboard(
+            media_key,
+            has_media=has_template_media(media_key),
+        ),
+    )
+
+
+@router.message(StateFilter(AdminRichTest.await_preview_media))
+async def save_rich_media_upload(
+    message: Message,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    is_admin: bool,
+) -> None:
+    """Persist one uploaded image under an isolated rich-preview key."""
+    if not await _ensure_rich_test_access(
+        db_session=db_session,
+        is_admin=is_admin,
+        message=message,
+    ):
+        return
+    data = await state.get_data()
+    media_key = str(data.get("admin_rich_media_key") or "")
+    definition = get_rich_media_definition(media_key)
+    if definition is None:
+        await message.answer(texts.ADMIN_RICH_MEDIA_INVALID_TEXT)
+        return
+
+    file_object = None
+    if message.photo:
+        file_object = message.photo[-1]
+    elif message.document is not None and str(message.document.mime_type or "").startswith(
+        "image/"
+    ):
+        file_object = message.document
+    if file_object is None:
+        await message.answer(texts.ADMIN_RICH_MEDIA_INVALID_TEXT)
+        return
+
+    try:
+        downloaded = await message.bot.download(file_object)
+        downloaded.seek(0)
+        image_bytes = downloaded.read()
+        if not image_bytes or len(image_bytes) > MAX_RICH_MEDIA_BYTES:
+            raise ValueError("invalid rich media size")
+        save_template_media(media_key, image_bytes)
+    except Exception:
+        await message.answer(texts.ADMIN_RICH_MEDIA_INVALID_TEXT)
+        return
+
+    await _show_rich_media_home(
+        message,
+        state,
+        notice_text=texts.ADMIN_RICH_MEDIA_SAVED_TEXT.format(title=definition.title),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_rich_test:media_remove:"))
+async def remove_rich_media_upload(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    is_admin: bool,
+) -> None:
+    """Remove an isolated rich image without touching ordinary template media."""
+    if not await _ensure_rich_test_access(
+        db_session=db_session,
+        is_admin=is_admin,
+        callback=callback,
+    ):
+        return
+    await callback.answer()
+    if callback.message is None or callback.data is None:
+        return
+    media_key = callback.data.rsplit(":", 1)[-1]
+    definition = get_rich_media_definition(media_key)
+    if definition is None:
+        return
+    remove_template_media(media_key)
+    await _show_rich_media_home(
+        callback.message,
+        state,
+        notice_text=texts.ADMIN_RICH_MEDIA_REMOVED_TEXT.format(title=definition.title),
+    )
 
 
 @router.callback_query(F.data == "admin_rich_test:broadcast")
