@@ -343,6 +343,46 @@ async def test_build_rich_price_message_skips_media_when_disabled(
 
 
 @pytest.mark.asyncio
+async def test_style_lab_previews_cover_advanced_rich_blocks(monkeypatch, tmp_path) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    monkeypatch.setattr(rich_messages_service, "has_template_media", lambda _key: False)
+    monkeypatch.setattr(rich_messages_service, "DEFAULT_ASSETS_DIR", tmp_path)
+
+    async with session_factory() as session:
+        settings = build_settings()
+        previews = {
+            key: await rich_messages_service.get_rich_preview_definition(key).builder(
+                session,
+                settings,
+            )
+            for key in ("style_calm", "style_editorial", "style_functional")
+        }
+
+        assert "RichTextMarked" in str(previews["style_calm"].rich_message.blocks)
+        assert "InputRichBlockFooter" in str(previews["style_calm"].rich_message.blocks)
+        assert "InputRichBlockPullQuotation" in str(
+            previews["style_editorial"].rich_message.blocks
+        )
+        assert "RichTextItalic" in str(previews["style_editorial"].rich_message.blocks)
+        assert "InputRichBlockList" in str(
+            previews["style_functional"].rich_message.blocks
+        )
+        assert "InputRichBlockDetails" in str(
+            previews["style_functional"].rich_message.blocks
+        )
+        assert "InputRichBlockBlockQuotation" in str(
+            previews["style_functional"].rich_message.blocks
+        )
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_registered_preview_sends_standard_then_rich() -> None:
     settings = build_settings()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")

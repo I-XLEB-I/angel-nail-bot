@@ -2586,6 +2586,18 @@ def build_admin_rich_comparison_keyboard(
             ("🙋‍♀️ Мои записи", ButtonStyle.PRIMARY),
             ("🏠 Главное меню", ButtonStyle.DANGER),
         ),
+        "style_calm": (
+            ("🙋‍♀️ Мои записи", ButtonStyle.PRIMARY),
+            ("🏠 Главное меню", ButtonStyle.DANGER),
+        ),
+        "style_editorial": (
+            ("📸 Посмотреть работы", ButtonStyle.PRIMARY),
+            ("📅 Записаться", ButtonStyle.SUCCESS),
+        ),
+        "style_functional": (
+            ("🗺 Открыть маршрут", ButtonStyle.PRIMARY),
+            ("💬 Написать Ангеле", ButtonStyle.SUCCESS),
+        ),
     }
     rows = [
         [

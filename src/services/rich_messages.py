@@ -13,15 +13,23 @@ from aiogram.types import (
     BufferedInputFile,
     InputMediaPhoto,
     InputRichBlock,
+    InputRichBlockBlockQuotation,
+    InputRichBlockDetails,
     InputRichBlockDivider,
+    InputRichBlockFooter,
+    InputRichBlockList,
+    InputRichBlockListItem,
     InputRichBlockParagraph,
     InputRichBlockPhoto,
+    InputRichBlockPullQuotation,
     InputRichBlockSectionHeading,
     InputRichBlockTable,
     InputRichMessage,
     Message,
     RichBlockTableCell,
     RichTextBold,
+    RichTextItalic,
+    RichTextMarked,
     RichTextUnderline,
 )
 from PIL import Image
@@ -401,6 +409,163 @@ async def build_rich_booking_confirmation_preview(
     )
 
 
+async def build_rich_calm_style_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Show a restrained premium hierarchy for transactional messages."""
+    date_label, time_label = _preview_datetime(settings)
+    address = await load_studio_address_copy_text(SettingRepository(db_session))
+    standard = (
+        "<b>Записала тебя ✨</b>\n\n"
+        f"📅 <b>{date_label} · {time_label}</b>\n"
+        "💅 <b>Покрытие гель-лак</b>\n"
+        "💳 Наличными\n\n"
+        "────────────\n\n"
+        f"📍 {address}\n\n"
+        "Напомню за сутки и за 2 часа.\n"
+        "Если что-то изменится — открой «Мои записи» 🤍"
+    )
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text="Записала тебя ✨", size=2),
+        InputRichBlockParagraph(
+            text=[
+                "📅 ",
+                RichTextBold(text=date_label),
+                " · ",
+                RichTextMarked(text=RichTextBold(text=time_label)),
+            ]
+        ),
+        InputRichBlockParagraph(
+            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
+        ),
+        InputRichBlockParagraph(text="💳 Наличными"),
+        InputRichBlockDivider(),
+        InputRichBlockParagraph(text=["📍 ", RichTextBold(text=address)]),
+        InputRichBlockFooter(
+            text="Напомню за сутки и за 2 часа. Если что-то изменится — открой «Мои записи» 🤍"
+        ),
+    ]
+    return RichPreview(standard_text=standard, rich_message=InputRichMessage(blocks=blocks))
+
+
+async def build_rich_editorial_style_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Show an editorial composition for warm brand storytelling."""
+    del settings
+    standard = (
+        "<b>Знакомься — это Ангела</b>\n\n"
+        "Мастер, к которому приходят не только за красивым маникюром, "
+        "но и за спокойным временем для себя.\n\n"
+        "<i>«Мне важно, чтобы тебе было комфортно на каждом этапе»</i>\n\n"
+        "Ниже можно посмотреть работы и выбрать настроение для следующего визита."
+    )
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text="Знакомься — это Ангела", size=1),
+        InputRichBlockParagraph(
+            text=[
+                "Мастер, к которому приходят не только за ",
+                RichTextBold(text="красивым маникюром"),
+                ", но и за спокойным временем для себя.",
+            ]
+        ),
+    ]
+    media_path = _effective_media_path("rich_about_inline", "about_master")
+    if media_path is not None:
+        blocks.append(_photo_block(media_path))
+    blocks.extend(
+        [
+            InputRichBlockPullQuotation(
+                text=RichTextItalic(
+                    text="Мне важно, чтобы тебе было комфортно на каждом этапе"
+                ),
+                credit="Ангела",
+            ),
+            InputRichBlockParagraph(
+                text="Ниже можно посмотреть работы и выбрать настроение для следующего визита."
+            ),
+            InputRichBlockFooter(text="Красиво, аккуратно и без лишней суеты 🌸"),
+        ]
+    )
+    return RichPreview(
+        standard_text=standard,
+        standard_media_path=_effective_media_path("about_master"),
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
+async def build_rich_functional_style_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Show lists, disclosure and a quotation in a practical address card."""
+    del settings
+    address = await load_studio_address_copy_text(SettingRepository(db_session))
+    standard = (
+        "<b>Адрес и как добраться</b>\n\n"
+        f"📍 <b>{address}</b>\n\n"
+        "1. Открой маршрут кнопкой ниже.\n"
+        "2. Сверься с фотографией входа.\n"
+        "3. Если не найдёшь студию — напиши Ангеле.\n\n"
+        "Все дополнительные ориентиры можно держать в сворачиваемом блоке."
+    )
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text="Адрес и как добраться", size=2),
+        InputRichBlockParagraph(text=["📍 ", RichTextBold(text=address)]),
+    ]
+    media_path = _effective_media_path("rich_address_landmark", "navigation_public")
+    if media_path is not None:
+        blocks.append(_photo_block(media_path, compact=True))
+    blocks.extend(
+        [
+            InputRichBlockSectionHeading(text="Перед выходом", size=4),
+            InputRichBlockList(
+                items=[
+                    InputRichBlockListItem(
+                        blocks=[InputRichBlockParagraph(text="Открой маршрут кнопкой ниже")],
+                        has_checkbox=True,
+                        is_checked=True,
+                    ),
+                    InputRichBlockListItem(
+                        blocks=[InputRichBlockParagraph(text="Сверься с фотографией входа")],
+                        has_checkbox=True,
+                    ),
+                    InputRichBlockListItem(
+                        blocks=[InputRichBlockParagraph(text="При необходимости напиши Ангеле")],
+                        has_checkbox=True,
+                    ),
+                ]
+            ),
+            InputRichBlockDetails(
+                summary=RichTextBold(text="Как найти вход"),
+                blocks=[
+                    InputRichBlockParagraph(
+                        text=(
+                            "Здесь можно показать код двери, этаж и подробные ориентиры, "
+                            "не перегружая основной экран."
+                        )
+                    )
+                ],
+            ),
+            InputRichBlockBlockQuotation(
+                blocks=[
+                    InputRichBlockParagraph(
+                        text="Если не найдёшь студию — напиши Ангеле, она поможет сориентироваться."
+                    )
+                ]
+            ),
+            InputRichBlockFooter(text="Маршрут и связь с мастером — на кнопках ниже."),
+        ]
+    )
+    return RichPreview(
+        standard_text=standard,
+        standard_media_path=_effective_media_path("navigation_public"),
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
 RICH_PREVIEW_DEFINITIONS: tuple[RichPreviewDefinition, ...] = (
     RichPreviewDefinition("price", "Прайс", build_rich_price_preview),
     RichPreviewDefinition("about", "Об Ангеле", build_rich_about_preview),
@@ -411,6 +576,21 @@ RICH_PREVIEW_DEFINITIONS: tuple[RichPreviewDefinition, ...] = (
         "booking_confirm",
         "Подтверждение записи",
         build_rich_booking_confirmation_preview,
+    ),
+    RichPreviewDefinition(
+        "style_calm",
+        "Стиль: спокойный премиум",
+        build_rich_calm_style_preview,
+    ),
+    RichPreviewDefinition(
+        "style_editorial",
+        "Стиль: редакционный",
+        build_rich_editorial_style_preview,
+    ),
+    RichPreviewDefinition(
+        "style_functional",
+        "Стиль: функциональный",
+        build_rich_functional_style_preview,
     ),
 )
 
