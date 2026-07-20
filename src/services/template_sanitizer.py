@@ -142,6 +142,16 @@ def _normalize_booking_confirm(stripped: str) -> str | None:
     return None
 
 
+def _normalize_price_heading(content: str) -> str:
+    """Use sentence case in a customized price template without replacing its body."""
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip():
+            lines[index] = line.replace("АКТУАЛЬНЫЙ ПРАЙС", "Актуальный прайс")
+            break
+    return "\n".join(lines)
+
+
 def normalize_template_content(key: str, content: str | None, default: str) -> str:
     """Return a safe user-facing template value instead of obvious placeholder content."""
     if content is None:
@@ -169,6 +179,8 @@ def normalize_template_content(key: str, content: str | None, default: str) -> s
         normalized_booking_confirm = _normalize_booking_confirm(stripped)
         if normalized_booking_confirm is not None:
             return normalized_booking_confirm
+    if key == "price":
+        content = _normalize_price_heading(content)
     if key == "navigation_public" and stripped == LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP.strip():
         return texts.DEFAULT_ADDRESS_PUBLIC_TEMPLATE
     if (

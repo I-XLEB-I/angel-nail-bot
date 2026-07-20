@@ -277,7 +277,7 @@ def build_services_caption_text() -> str:
 def build_addons_prompt_text(addons: list[Service], selected_ids: list[int]) -> str:
     """Render the add-on selection prompt."""
     selected_addons = [service.name for service in addons if service.id in selected_ids]
-    lines = ["💅 ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ", "", "Ориентир по ценам — на картинке выше."]
+    lines = ["💅 Дополнительные опции", "", "Ориентир по ценам — на картинке выше."]
     if selected_addons:
         lines.append(f"Сейчас выбрано: {', '.join(selected_addons)}")
     else:

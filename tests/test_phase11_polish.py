@@ -85,6 +85,14 @@ def test_literal_template_key_is_not_used_as_about_master() -> None:
     )
 
 
+def test_custom_price_template_keeps_body_but_normalizes_heading() -> None:
+    custom = "💅 АКТУАЛЬНЫЙ ПРАЙС\n\nАвторское пояснение Ангелы 🤍"
+
+    normalized = normalize_template_content("price", custom, texts.DEFAULT_PRICE_TEMPLATE)
+
+    assert normalized == "💅 Актуальный прайс\n\nАвторское пояснение Ангелы 🤍"
+
+
 def test_shared_screen_templates_expose_their_effective_media() -> None:
     assert get_template_definition("address_post_confirm").supports_media is True
     assert get_template_media_key("address_post_confirm") == "booking_confirm"

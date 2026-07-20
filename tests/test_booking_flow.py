@@ -11,6 +11,7 @@ from src.db.base import Base
 from src.db.models import Booking, BookingStatus, Service, ServiceKind, Slot, SlotStatus, User
 from src.db.repositories.bookings import BookingRepository
 from src.services.booking import (
+    build_addons_prompt_text,
     build_booking_summary_text,
     cancel_booking,
     confirm_booking,
@@ -19,6 +20,24 @@ from src.services.booking import (
     normalize_phone,
     reschedule_booking,
 )
+
+
+def test_addons_prompt_heading_uses_sentence_case() -> None:
+    addon = Service(
+        id=1,
+        name="Дизайн",
+        price=250,
+        price_variable=True,
+        duration_min=0,
+        kind=ServiceKind.ADDON,
+        is_active=True,
+        display_order=10,
+    )
+
+    text = build_addons_prompt_text([addon], [])
+
+    assert text.startswith("💅 Дополнительные опции")
+    assert "ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ" not in text
 
 
 @pytest.mark.parametrize(
