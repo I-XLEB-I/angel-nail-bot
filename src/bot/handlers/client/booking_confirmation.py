@@ -25,7 +25,7 @@ from src.services.booking_completion import BookingClientConfirmationPayload
 from src.services.button_configs import load_all_button_configs, load_master_contact_url
 from src.services.studio_address import load_studio_address_copy_text
 from src.services.template_media import has_template_media
-from src.services.template_texts import ensure_late_policy_notice, render_template_text
+from src.services.template_texts import render_template_text
 
 _LEGACY_BOOKING_CONFIRM_TEMPLATE = """<b>✅ Записала тебя 🌸</b>
 
@@ -85,7 +85,7 @@ async def _build_booking_confirmation_text(
         text += (
             f"\n\n💳 Оплата: <b>{escape(format_payment_method_label(payload.payment_method))}</b>"
         )
-    return ensure_late_policy_notice(text)
+    return text.strip()
 
 
 async def _build_booking_confirmation_keyboard(

@@ -12,6 +12,7 @@ MASTER_TELEGRAM_USERNAME_SETTING_KEY = "master_telegram_username"
 DEFAULT_MASTER_TELEGRAM_USERNAME = "ny_pip"
 ANGELA_CHAT_DEFAULT_TEXT = "Здравствуйте, хочу уточнить по поводу записи на Маникюр 🌸"
 PORTFOLIO_CUSTOM_EMOJI_ID = "5370607250731718891"
+NAVIGATION_CUSTOM_EMOJI_ID = "5255703720078879038"
 DEFAULT_PORTFOLIO_CHANNEL_URL = "https://t.me/angelsnailspace"
 LEGACY_DEFAULT_ADDRESS_MAP_URL = (
     "https://yandex.ru/maps/213/moscow/house/ochakovskoye_shosse_5k3/"
@@ -194,7 +195,7 @@ EDITABLE_BUTTON_DEFINITIONS: tuple[EditableButtonDefinition, ...] = (
         setting_key="button_config.common.back",
         default_text="⬅️ Назад",
         default_style_name=BUTTON_STYLE_DANGER,
-        default_icon_custom_emoji_id=None,
+        default_icon_custom_emoji_id=NAVIGATION_CUSTOM_EMOJI_ID,
     ),
     EditableButtonDefinition(
         key="done",
@@ -212,7 +213,7 @@ EDITABLE_BUTTON_DEFINITIONS: tuple[EditableButtonDefinition, ...] = (
         setting_key="button_config.common.cancel_back",
         default_text="⬅️ Отмена",
         default_style_name=BUTTON_STYLE_DANGER,
-        default_icon_custom_emoji_id=None,
+        default_icon_custom_emoji_id=NAVIGATION_CUSTOM_EMOJI_ID,
     ),
     EditableButtonDefinition(
         key="cancel_action",

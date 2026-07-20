@@ -29,6 +29,7 @@ from src.bot.keyboards.admin import (
     build_admin_proxy_reply_prompt_keyboard,
     build_admin_repair_decline_confirm_keyboard,
     build_admin_repair_warranty_force_keyboard,
+    nav_button,
 )
 from src.bot.keyboards.client import build_offered_time_keyboard
 from src.bot.slot_picker import (
@@ -166,12 +167,8 @@ def _build_approval_back_keyboard(approval_id: int) -> InlineKeyboardMarkup:
     """Build the smallest back-to-request keyboard for approval slot pickers."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу",
-                    callback_data=f"admin_approvals:open:{approval_id}",
-                )
-            ]
+            [nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -195,14 +192,8 @@ def _build_approval_day_keyboard(
             for day_option in day_options[index : index + 2]
         ]
         rows.append(current_row)
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ К запросу",
-                callback_data=f"admin_approvals:open:{approval_id}",
-            )
-        ]
-    )
+    rows.append([nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -256,14 +247,8 @@ def _build_approval_schedule_day_keyboard(
             )
         rows.append(nav_row)
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ К запросу",
-                callback_data=f"admin_approvals:open:{approval_id}",
-            )
-        ]
-    )
+    rows.append([nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -301,31 +286,20 @@ def _build_approval_time_keyboard(
 
     rows.append(
         [
-            InlineKeyboardButton(
-                text="⬅️ К дням",
-                callback_data=(
-                    f"approval:pick_days_back:{approval_id}:{mode_token}:{local_day.isoformat()}"
-                ),
+            nav_button(
+                "⬅️ К дням",
+                f"approval:pick_days_back:{approval_id}:{mode_token}:{local_day.isoformat()}",
             )
         ]
     )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ К запросу",
-                callback_data=f"admin_approvals:open:{approval_id}",
-            )
-        ]
-    )
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _approval_day_prompt(*, offer_mode: bool) -> str:
     """Return the approval day-picker prompt."""
     return (
-        texts.ADMIN_APPROVAL_OFFER_DAY_TEXT
-        if offer_mode
-        else texts.ADMIN_APPROVAL_CONFIRM_DAY_TEXT
+        texts.ADMIN_APPROVAL_OFFER_DAY_TEXT if offer_mode else texts.ADMIN_APPROVAL_CONFIRM_DAY_TEXT
     )
 
 
@@ -411,9 +385,7 @@ async def _show_approval_day_picker(
                 if any(entry.local_date == day_option.local_date for entry in current_page.entries)
             ]
             if state is not None:
-                await state.update_data(
-                    **{_APPROVAL_SLOT_PICKER_PAGE_STATE_KEY: current_index}
-                )
+                await state.update_data(**{_APPROVAL_SLOT_PICKER_PAGE_STATE_KEY: current_index})
             photo_bytes = render_schedule_image_bytes(
                 current_page.entries,
                 period=current_page.period,
@@ -1655,11 +1627,16 @@ async def submit_custom_repair_offer(
         chat_id=panel_chat_id,
         message_id=panel_message_id,
         text=f"{texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT}\n\n{texts.ADMIN_APPROVALS_HEADER_TEXT}",
-        reply_markup=build_admin_approvals_list_keyboard(
-            [(pending.id, render_approval_queue_label(pending)) for pending in pending_approvals]
-        )
-        if pending_approvals
-        else None,
+        reply_markup=(
+            build_admin_approvals_list_keyboard(
+                [
+                    (pending.id, render_approval_queue_label(pending))
+                    for pending in pending_approvals
+                ]
+            )
+            if pending_approvals
+            else None
+        ),
     )
 
 
@@ -2013,9 +1990,7 @@ async def quietly_close_approval(
     approval.status = ApprovalRequestStatus.RESPONDED
     approval.resolved_at = utcnow()
     notice_text = (
-        texts.ADMIN_APPROVAL_QUIET_CLOSE_TEXT
-        if quiet_close
-        else texts.ADMIN_APPROVAL_READ_TEXT
+        texts.ADMIN_APPROVAL_QUIET_CLOSE_TEXT if quiet_close else texts.ADMIN_APPROVAL_READ_TEXT
     )
     approval.admin_response_text = "Тихо закрыто" if quiet_close else "Прочитано"
     await db_session.commit()

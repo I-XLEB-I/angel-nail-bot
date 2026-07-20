@@ -22,6 +22,7 @@ from src.bot.keyboards.admin import (
     build_admin_booking_card_action_callback,
     build_admin_booking_card_callback,
     build_admin_booking_card_keyboard,
+    nav_button,
 )
 from src.bot.states import AdminBookingCardReschedule, AdminClientMessage
 from src.bot.ui_utils import replace_inline_message_text
@@ -94,18 +95,19 @@ def build_booking_card_back_keyboard(
     back_callback: str,
     label: str = "⬅️ К записи",
 ) -> InlineKeyboardMarkup:
-    """Build a one-button keyboard that returns to the booking card."""
+    """Build back and direct-main-menu actions for a nested booking-card screen."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=build_admin_booking_card_callback(
+                nav_button(
+                    label,
+                    build_admin_booking_card_callback(
                         booking_id,
                         back_callback=back_callback,
                     ),
                 )
-            ]
+            ],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 

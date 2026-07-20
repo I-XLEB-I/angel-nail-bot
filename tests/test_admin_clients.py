@@ -198,7 +198,8 @@ async def test_open_clients_list_page_renders_first_page() -> None:
         assert "Страница: 1 из 2" in text
         assert "Всего клиенток: 10" in text
         assert markup is not None
-        assert markup.inline_keyboard[-1][0].callback_data == "admin_clients:home"
+        assert markup.inline_keyboard[-2][0].callback_data == "admin_clients:home"
+        assert markup.inline_keyboard[-1][0].callback_data == "admin_menu:home"
 
     await engine.dispose()
 
@@ -277,7 +278,8 @@ async def test_open_client_card_from_list_keeps_back_context() -> None:
         assert "📅 Ближайшая запись" in text
         assert "ℹ️ Инфо" not in text
         assert markup is not None
-        assert markup.inline_keyboard[-1][0].callback_data == "admin_clients:list:1"
+        assert markup.inline_keyboard[-2][0].callback_data == "admin_clients:list:1"
+        assert markup.inline_keyboard[-1][0].callback_data == "admin_menu:home"
 
     await engine.dispose()
 
@@ -381,7 +383,8 @@ async def test_open_client_card_from_approval_keeps_back_context() -> None:
         assert callback.message.edits
         _, markup = callback.message.edits[0]
         assert markup is not None
-        assert markup.inline_keyboard[-1][0].callback_data == "admin_approvals:open:77"
+        assert markup.inline_keyboard[-2][0].callback_data == "admin_approvals:open:77"
+        assert markup.inline_keyboard[-1][0].callback_data == "admin_menu:home"
 
     await engine.dispose()
 

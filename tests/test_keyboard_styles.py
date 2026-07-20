@@ -50,6 +50,7 @@ from src.services.admin_defaults import list_template_categories, list_template_
 from src.services.booking import DayOption
 from src.services.button_configs import (
     DEFAULT_PORTFOLIO_CHANNEL_URL,
+    NAVIGATION_CUSTOM_EMOJI_ID,
     ClientMenuButtonConfig,
 )
 
@@ -167,7 +168,8 @@ def test_services_and_fallback_reuse_main_menu_button_overrides() -> None:
     assert fallback_keyboard.inline_keyboard[0][0].text == "🪄 Хочу записаться"
     assert fallback_keyboard.inline_keyboard[1][0].text == "💌 Написать Ангеле"
     assert fallback_keyboard.inline_keyboard[1][0].style == ButtonStyle.SUCCESS
-    assert fallback_keyboard.inline_keyboard[2][0].text == "↩︎ Назад"
+    assert fallback_keyboard.inline_keyboard[2][0].text == "Главное меню"
+    assert fallback_keyboard.inline_keyboard[2][0].icon_custom_emoji_id is not None
 
 
 def test_client_card_reuses_main_menu_button_overrides() -> None:
@@ -275,10 +277,14 @@ def test_booking_card_back_like_button_reuses_common_back_icon() -> None:
         },
     )
 
-    back_like_button = keyboard.inline_keyboard[-1][0]
+    back_like_button = keyboard.inline_keyboard[-2][0]
     assert back_like_button.text == "К моим записям"
     assert back_like_button.icon_custom_emoji_id == "777888"
     assert back_like_button.callback_data == "my_bookings:overview"
+    home_button = keyboard.inline_keyboard[-1][0]
+    assert home_button.text == "Главное меню"
+    assert home_button.icon_custom_emoji_id == "777888"
+    assert home_button.callback_data == "client_menu:back"
 
 
 def test_reschedule_time_keyboard_accepts_back_button_overrides() -> None:
@@ -301,9 +307,11 @@ def test_reschedule_time_keyboard_accepts_back_button_overrides() -> None:
         },
     )
 
-    back_like_button = keyboard.inline_keyboard[-1][0]
+    back_like_button = keyboard.inline_keyboard[-2][0]
     assert back_like_button.text == "К дням"
     assert back_like_button.icon_custom_emoji_id == "777888"
+    assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
+    assert keyboard.inline_keyboard[-1][0].icon_custom_emoji_id == "777888"
 
 
 def test_vitrine_actions_keyboard_can_include_map_cta() -> None:
@@ -369,10 +377,10 @@ def test_repeated_client_ctas_accept_runtime_overrides() -> None:
     assert payment_keyboard.inline_keyboard[0][0].style == ButtonStyle.DANGER
     assert payment_keyboard.inline_keyboard[1][0].text == "🏦 Перевести"
     assert payment_keyboard.inline_keyboard[1][0].style == ButtonStyle.SUCCESS
-    assert day_keyboard.inline_keyboard[-2][0].text == "🗓 Хочу другую дату"
-    assert day_keyboard.inline_keyboard[-2][0].style == ButtonStyle.PRIMARY
-    assert time_keyboard.inline_keyboard[-2][0].text == "🕰 Другое время"
-    assert time_keyboard.inline_keyboard[-2][0].style == ButtonStyle.SUCCESS
+    assert day_keyboard.inline_keyboard[-3][0].text == "🗓 Хочу другую дату"
+    assert day_keyboard.inline_keyboard[-3][0].style == ButtonStyle.PRIMARY
+    assert time_keyboard.inline_keyboard[-3][0].text == "🕰 Другое время"
+    assert time_keyboard.inline_keyboard[-3][0].style == ButtonStyle.SUCCESS
     assert map_keyboard.inline_keyboard[0][0].text == "📍 Построить маршрут"
     assert map_keyboard.inline_keyboard[0][0].url == "https://maps.example/route"
     assert map_keyboard.inline_keyboard[0][0].style == ButtonStyle.DANGER
@@ -391,9 +399,31 @@ def test_confirm_keyboard_accepts_common_button_overrides() -> None:
         }
     )
 
-    assert keyboard.inline_keyboard[0][1].text == "◀︎ Назад"
-    assert keyboard.inline_keyboard[0][1].style == ButtonStyle.PRIMARY
-    assert keyboard.inline_keyboard[1][0].text == "🛑 Сбросить"
+    assert keyboard.inline_keyboard[1][0].text == "Назад"
+    assert keyboard.inline_keyboard[1][0].style == ButtonStyle.PRIMARY
+    assert keyboard.inline_keyboard[2][0].text == "Сбросить"
+    assert (
+        keyboard.inline_keyboard[1][0].icon_custom_emoji_id
+        == keyboard.inline_keyboard[2][0].icon_custom_emoji_id
+    )
+
+
+def test_confirm_reuses_done_premium_emoji_and_style() -> None:
+    keyboard = build_confirm_keyboard(
+        button_configs={
+            "common.done": ClientMenuButtonConfig(
+                text="✅ Готово",
+                style_name="primary",
+                icon_custom_emoji_id="444555",
+            )
+        }
+    )
+
+    confirm_button = keyboard.inline_keyboard[0][0]
+    assert confirm_button.text == "Подтвердить"
+    assert confirm_button.style == ButtonStyle.PRIMARY
+    assert confirm_button.icon_custom_emoji_id == "444555"
+    assert confirm_button.callback_data == "booking:confirm"
 
 
 def test_addons_keyboard_marks_toggle_buttons_as_primary() -> None:
@@ -486,10 +516,13 @@ def test_repair_flow_keyboards_use_real_back_navigation() -> None:
         },
     )
 
-    assert photo_keyboard.inline_keyboard[-1][0].callback_data == "repair:photos_back:42"
+    assert photo_keyboard.inline_keyboard[-2][0].callback_data == "repair:photos_back:42"
+    assert photo_keyboard.inline_keyboard[-2][0].icon_custom_emoji_id == "999111"
+    assert photo_keyboard.inline_keyboard[-1][0].callback_data == "client_menu:back"
     assert photo_keyboard.inline_keyboard[-1][0].icon_custom_emoji_id == "999111"
-    assert description_keyboard.inline_keyboard[0][0].callback_data == "repair:description_back:42"
-    assert description_keyboard.inline_keyboard[0][0].icon_custom_emoji_id == "999111"
+    assert description_keyboard.inline_keyboard[-2][0].callback_data == "repair:description_back:42"
+    assert description_keyboard.inline_keyboard[-2][0].icon_custom_emoji_id == "999111"
+    assert description_keyboard.inline_keyboard[-1][0].callback_data == "client_menu:back"
 
 
 def test_repeat_prompt_reuses_browse_override() -> None:
@@ -618,6 +651,17 @@ def test_settings_edit_keyboard_has_home_shortcut() -> None:
     assert keyboard.inline_keyboard[-1][0].callback_data == "admin_menu:home"
 
 
+def test_admin_navigation_uses_one_premium_icon_for_cancel_and_home() -> None:
+    keyboard = build_admin_settings_edit_keyboard()
+    cancel_button = keyboard.inline_keyboard[-2][0]
+    home_button = keyboard.inline_keyboard[-1][0]
+
+    assert cancel_button.text == "Отмена"
+    assert home_button.text == "Главное меню"
+    assert cancel_button.icon_custom_emoji_id == NAVIGATION_CUSTOM_EMOJI_ID
+    assert home_button.icon_custom_emoji_id == NAVIGATION_CUSTOM_EMOJI_ID
+
+
 def test_stats_keyboard_has_back_to_admin_menu() -> None:
     keyboard = build_admin_stats_period_keyboard("current")
 
@@ -660,9 +704,7 @@ def test_templates_keyboards_include_back_and_home_navigation() -> None:
     assert group_keyboard.inline_keyboard[-2][0].callback_data == "admin_templates:category:clients"
     assert detail_keyboard.inline_keyboard[-1][0].callback_data == "admin_menu:home"
     media_callbacks = [
-        button.callback_data
-        for row in detail_with_media_keyboard.inline_keyboard
-        for button in row
+        button.callback_data for row in detail_with_media_keyboard.inline_keyboard for button in row
     ]
     assert "admin_templates:preview_image:booking_confirm" not in media_callbacks
     assert "admin_templates:restore_image:booking_confirm" in media_callbacks

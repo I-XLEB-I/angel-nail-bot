@@ -4,7 +4,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
@@ -14,6 +14,7 @@ from src.bot.admin_panel import (
     send_admin_panel,
 )
 from src.bot.keyboards.admin import (
+    build_admin_rich_comparison_keyboard,
     build_admin_rich_test_input_keyboard,
     build_admin_rich_test_keyboard,
     build_admin_rich_test_preview_keyboard,
@@ -21,7 +22,7 @@ from src.bot.keyboards.admin import (
 from src.bot.states import AdminRichTest
 from src.config import Settings
 from src.services.rich_messages import (
-    build_rich_price_message,
+    get_rich_preview_definition,
     is_rich_messages_test_enabled,
     validate_rich_test_source_message,
 )
@@ -134,6 +135,7 @@ async def rich_test_home(
     await _show_rich_test_home(callback.message, state, settings=settings)
 
 
+@router.callback_query(F.data.startswith("admin_rich_test:preview:"))
 @router.callback_query(F.data == "admin_rich_test:price_preview")
 async def send_rich_price_preview(
     callback: CallbackQuery,
@@ -143,7 +145,7 @@ async def send_rich_price_preview(
     is_admin: bool,
     settings: Settings,
 ) -> None:
-    """Send the rich price preview as a separate auxiliary message."""
+    """Send one registered standard/rich comparison as auxiliary messages."""
     if not await _ensure_rich_test_access(
         db_session=db_session,
         is_admin=is_admin,
@@ -151,20 +153,59 @@ async def send_rich_price_preview(
     ):
         return
     await callback.answer()
-    if callback.message is None:
+    if callback.message is None or callback.data is None:
+        return
+
+    preview_key = (
+        "price"
+        if callback.data == "admin_rich_test:price_preview"
+        else callback.data.rsplit(":", 1)[-1]
+    )
+    definition = get_rich_preview_definition(preview_key)
+    if definition is None:
+        await callback.answer(texts.ADMIN_RICH_TEST_UNKNOWN_PREVIEW_TEXT, show_alert=True)
         return
 
     await _show_rich_test_home(
         callback.message,
         state,
         settings=settings,
-        notice_text=texts.ADMIN_RICH_TEST_PRICE_SENT_TEXT,
+        notice_text=texts.ADMIN_RICH_TEST_COMPARISON_SENT_TEXT.format(title=definition.title),
     )
-    preview = await callback.bot.send_rich_message(
+    comparison = await definition.builder(db_session, settings)
+    standard_keyboard = build_admin_rich_comparison_keyboard(preview_key, rich=False)
+    if comparison.standard_media_path is not None:
+        standard_preview = await callback.bot.send_photo(
+            chat_id=callback.message.chat.id,
+            photo=BufferedInputFile(
+                comparison.standard_media_path.read_bytes(),
+                filename=comparison.standard_media_path.name,
+            ),
+            caption=comparison.standard_text,
+            reply_markup=standard_keyboard,
+            parse_mode="HTML",
+        )
+    else:
+        standard_preview = await callback.bot.send_message(
+            chat_id=callback.message.chat.id,
+            text=comparison.standard_text,
+            reply_markup=standard_keyboard,
+            parse_mode="HTML",
+        )
+    await remember_admin_aux_message(state, standard_preview)
+
+    rich_preview = await callback.bot.send_rich_message(
         chat_id=callback.message.chat.id,
-        rich_message=await build_rich_price_message(db_session),
+        rich_message=comparison.rich_message,
+        reply_markup=build_admin_rich_comparison_keyboard(preview_key, rich=True),
     )
-    await remember_admin_aux_message(state, preview)
+    await remember_admin_aux_message(state, rich_preview)
+
+
+@router.callback_query(F.data == "admin_rich_test:noop")
+async def ignore_rich_preview_action(callback: CallbackQuery) -> None:
+    """Acknowledge visual-only buttons without entering client flows."""
+    await callback.answer(texts.ADMIN_RICH_TEST_PREVIEW_BUTTON_TEXT)
 
 
 @router.callback_query(F.data == "admin_rich_test:broadcast")

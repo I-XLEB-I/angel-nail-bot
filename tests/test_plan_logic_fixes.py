@@ -359,8 +359,7 @@ async def test_send_booking_success_message_respects_payment_placeholder(monkeyp
 
     assert len(captured) == 1
     assert captured[0].count("Оплата") == 1
-    assert "15 минут" in captured[0]
-    assert "отмен" in captured[0].lower()
+    assert "15 минут" not in captured[0]
 
     await engine.dispose()
 
@@ -688,7 +687,7 @@ async def test_settings_diagnostics_show_effective_template_previews() -> None:
         assert "greeting_header" in text
         assert "Привет, я бот Ангелы" in text
         assert "portfolio_intro" in text
-        assert "РАБОТЫ И НАСТРОЕНИЕ" in text
+        assert "Работы и настроение" in text
         assert "about_master" in text
         assert "Знакомься — это Ангела" in text
         assert "Последний backup" in text

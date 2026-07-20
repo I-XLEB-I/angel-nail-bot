@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bot import texts
 from src.bot.admin_panel import clear_state_preserving_admin_panel
 from src.bot.handlers.client.booking_confirmation import send_booking_confirmation_bot_message
+from src.bot.keyboards.admin import nav_button
 from src.bot.slot_picker import (
     order_day_options_by_preference,
     order_slots_by_time_preference,
@@ -44,17 +45,7 @@ _DAY_PAGE_STATE_KEY = "slot_picker_admin_manual_page"
 
 
 def _cancel_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Отмена",
-                    callback_data=_CANCEL_CB,
-                    style=ButtonStyle.DANGER,
-                )
-            ]
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[nav_button("⬅️ Отмена", _CANCEL_CB)]])
 
 
 def _build_manual_day_keyboard(day_options: list) -> InlineKeyboardMarkup:
@@ -69,9 +60,7 @@ def _build_manual_day_keyboard(day_options: list) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for index in range(0, len(day_buttons), 2):
         rows.append(day_buttons[index : index + 2])
-    rows.append(
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)]
-    )
+    rows.append([nav_button("⬅️ Отмена", _CANCEL_CB)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -115,9 +104,7 @@ def _build_manual_schedule_day_keyboard(
                 )
             )
         rows.append(nav_row)
-    rows.append(
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)]
-    )
+    rows.append([nav_button("⬅️ Отмена", _CANCEL_CB)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -133,17 +120,8 @@ def _build_manual_time_keyboard(slots: list, *, tz_name: str) -> InlineKeyboardM
     rows: list[list[InlineKeyboardButton]] = []
     for index in range(0, len(time_buttons), 3):
         rows.append(time_buttons[index : index + 3])
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ К дням",
-                callback_data="admin_manual_booking:days_back",
-            )
-        ]
-    )
-    rows.append(
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)]
-    )
+    rows.append([nav_button("⬅️ К дням", "admin_manual_booking:days_back")])
+    rows.append([nav_button("⬅️ Отмена", _CANCEL_CB)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -229,13 +207,7 @@ async def manual_booking_client_search(
                     style=ButtonStyle.PRIMARY,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Отмена",
-                    callback_data=_CANCEL_CB,
-                    style=ButtonStyle.DANGER,
-                )
-            ],
+            [nav_button("⬅️ Отмена", _CANCEL_CB)],
         ]
         await message.answer(
             texts.ADMIN_MANUAL_BOOKING_NOT_FOUND_CREATE_TEXT.format(name=query[:40]),
@@ -252,9 +224,7 @@ async def manual_booking_client_search(
         ]
         for u in users
     ]
-    rows.append(
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)]
-    )
+    rows.append([nav_button("⬅️ Отмена", _CANCEL_CB)])
     await message.answer(
         "Выбери клиента 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -353,9 +323,7 @@ async def _show_service_picker(
         [InlineKeyboardButton(text=s.name, callback_data=f"admin_manual_booking:service:{s.id}")]
         for s in services
     ]
-    rows.append(
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)]
-    )
+    rows.append([nav_button("⬅️ Отмена", _CANCEL_CB)])
     await state.set_state(AdminManualBooking.choose_service)
     await replace_inline_message_text(
         message,
@@ -618,7 +586,7 @@ async def manual_booking_slot_chosen(
                 style=ButtonStyle.SUCCESS,
             )
         ],
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data=_CANCEL_CB, style=ButtonStyle.DANGER)],
+        [nav_button("⬅️ Отмена", _CANCEL_CB)],
     ]
     await state.set_state(AdminManualBooking.confirm)
     await replace_inline_message_text(

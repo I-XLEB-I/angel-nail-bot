@@ -1,31 +1,74 @@
 from __future__ import annotations
 
-from html import escape
+import io
+import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from html import unescape
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aiogram.types import (
     BufferedInputFile,
     InputMediaPhoto,
+    InputRichBlock,
+    InputRichBlockDivider,
+    InputRichBlockParagraph,
+    InputRichBlockPhoto,
+    InputRichBlockSectionHeading,
+    InputRichBlockTable,
     InputRichMessage,
-    InputRichMessageMedia,
     Message,
+    RichBlockTableCell,
+    RichTextBold,
+    RichTextUnderline,
 )
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
+from src.bot.handlers.client.address import build_public_address_text
+from src.bot.handlers.client.portfolio import build_master_profile_caption
+from src.config import Settings
 from src.db.models import ServiceKind
 from src.db.repositories.services import ServiceRepository
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.admin_defaults import required_template_defaults
 from src.services.booking import format_service_price
+from src.services.image_theme import DEFAULT_ASSETS_DIR
 from src.services.runtime_settings import get_bool_setting
+from src.services.studio_address import load_studio_address_copy_text
 from src.services.template_media import has_template_media, template_media_path
+from src.services.template_texts import ensure_late_policy_notice, render_template_text
 
 RICH_MESSAGES_TEST_ENABLED_KEY = "rich_messages_test_enabled"
-RICH_PRICE_MEDIA_ID = "price_cover"
 COPYABLE_MEDIA_CONTENT_TYPES = frozenset(
     {"animation", "audio", "document", "photo", "video", "voice"}
 )
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+@dataclass(frozen=True, slots=True)
+class RichPreview:
+    """One standard/rich comparison rendered only in the admin sandbox."""
+
+    standard_text: str
+    rich_message: InputRichMessage
+    standard_media_path: Path | None = None
+
+
+RichPreviewBuilder = Callable[[AsyncSession, Settings], Awaitable[RichPreview]]
+
+
+@dataclass(frozen=True, slots=True)
+class RichPreviewDefinition:
+    """Metadata and builder for one extensible rich sandbox idea."""
+
+    key: str
+    title: str
+    builder: RichPreviewBuilder
 
 
 async def is_rich_messages_test_enabled(db_session: AsyncSession) -> bool:
@@ -56,57 +99,93 @@ def validate_rich_test_source_message(message: Message) -> str | None:
     return texts.ADMIN_RICH_TEST_UNSUPPORTED_MESSAGE_TEXT
 
 
-def _split_price_intro(text: str) -> tuple[str, str]:
-    """Split one editable intro into a heading and the remaining body."""
-    paragraphs = [chunk.strip() for chunk in text.strip().split("\n\n") if chunk.strip()]
+def _plain_text(value: str) -> str:
+    return unescape(_HTML_TAG_RE.sub("", value)).strip()
+
+
+def _split_heading_and_body(value: str, *, fallback_heading: str) -> tuple[str, list[str]]:
+    paragraphs = [part.strip() for part in _plain_text(value).split("\n\n") if part.strip()]
     if not paragraphs:
-        return "Актуальный прайс", ""
-
-    first_block = paragraphs[0]
-    first_lines = [line.strip() for line in first_block.splitlines() if line.strip()]
-    if not first_lines:
-        return "Актуальный прайс", "\n\n".join(paragraphs[1:])
-
-    heading = first_lines[0]
-    body_blocks: list[str] = []
-    remaining_first_block = "\n".join(first_lines[1:]).strip()
-    if remaining_first_block:
-        body_blocks.append(remaining_first_block)
-    body_blocks.extend(paragraphs[1:])
-    return heading, "\n\n".join(body_blocks).strip()
+        return fallback_heading, []
+    first_lines = [line.strip() for line in paragraphs[0].splitlines() if line.strip()]
+    heading = first_lines[0] if first_lines else fallback_heading
+    body: list[str] = []
+    if len(first_lines) > 1:
+        body.append("\n".join(first_lines[1:]))
+    body.extend(paragraphs[1:])
+    return heading, body
 
 
-def _render_rich_paragraphs(text: str) -> str:
-    """Render plain admin-editable text as rich HTML paragraphs."""
-    blocks: list[str] = []
-    for paragraph in text.split("\n\n"):
-        lines = [escape(line.strip()) for line in paragraph.splitlines() if line.strip()]
-        if not lines:
-            continue
-        blocks.append(f"<p>{' '.join(lines)}</p>")
-    return "".join(blocks)
+def _text_blocks(value: str, *, fallback_heading: str) -> list[InputRichBlock]:
+    heading, paragraphs = _split_heading_and_body(value, fallback_heading=fallback_heading)
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text=heading, size=2),
+    ]
+    blocks.extend(InputRichBlockParagraph(text=paragraph) for paragraph in paragraphs)
+    return blocks
 
 
-def _render_price_table(title: str, services: list) -> str:
-    """Render one rich HTML price table for one service group."""
-    rows = [
-        "<table bordered striped>",
-        f"<caption>{escape(title)}</caption>",
-        "<tr><th>Услуга</th><th>Цена</th></tr>",
+def _effective_media_path(*keys: str) -> Path | None:
+    for key in keys:
+        if has_template_media(key):
+            return template_media_path(key)
+    return None
+
+
+def _photo_block(path: Path, *, compact: bool = False) -> InputRichBlockPhoto:
+    if not compact:
+        content = path.read_bytes()
+    else:
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+            target_ratio = 3.0
+            current_ratio = image.width / image.height
+            if current_ratio < target_ratio:
+                crop_height = max(1, round(image.width / target_ratio))
+                top = max(0, (image.height - crop_height) // 2)
+                image = image.crop((0, top, image.width, top + crop_height))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=90, optimize=True)
+            content = buffer.getvalue()
+    return InputRichBlockPhoto(
+        photo=InputMediaPhoto(
+            media=BufferedInputFile(content, filename=path.name),
+        )
+    )
+
+
+def _price_table(title: str, services: list) -> InputRichBlockTable:
+    cells = [
+        [
+            RichBlockTableCell(align="left", valign="middle", text="Услуга", is_header=True),
+            RichBlockTableCell(align="right", valign="middle", text="Цена", is_header=True),
+        ]
     ]
     for service in services:
-        rows.append(
-            "<tr>"
-            f"<td>{escape(service.name)}</td>"
-            f"<td align=\"right\">{escape(format_service_price(service))}</td>"
-            "</tr>"
+        cells.append(
+            [
+                RichBlockTableCell(align="left", valign="middle", text=service.name),
+                RichBlockTableCell(
+                    align="right",
+                    valign="middle",
+                    text=RichTextBold(text=format_service_price(service)),
+                ),
+            ]
         )
-    rows.append("</table>")
-    return "".join(rows)
+    return InputRichBlockTable(
+        cells=cells,
+        is_bordered=True,
+        is_striped=True,
+        caption=title,
+    )
 
 
-async def build_rich_price_message(db_session: AsyncSession) -> InputRichMessage:
-    """Build the admin-only rich price preview from current templates and services."""
+async def build_rich_price_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the current price and a data-driven rich table comparison."""
+    del settings
     service_repository = ServiceRepository(db_session)
     template_repository = TemplateRepository(db_session)
     defaults = required_template_defaults()
@@ -114,34 +193,220 @@ async def build_rich_price_message(db_session: AsyncSession) -> InputRichMessage
     base_services = await service_repository.list_active(kind=ServiceKind.BASE)
     addon_services = await service_repository.list_active(kind=ServiceKind.ADDON)
 
-    heading, body = _split_price_intro(price_text)
-    html_parts: list[str] = []
-    media: list[InputRichMessageMedia] | None = None
-
-    if has_template_media("price"):
-        image_path = template_media_path("price")
-        media = [
-            InputRichMessageMedia(
-                id=RICH_PRICE_MEDIA_ID,
-                media=InputMediaPhoto(
-                    media=BufferedInputFile(
-                        image_path.read_bytes(),
-                        filename=image_path.name,
-                    )
-                ),
-            )
-        ]
-        html_parts.append(f'<img src="tg://photo?id={RICH_PRICE_MEDIA_ID}" alt="Прайс"/>')
-
-    html_parts.append(f"<h2>{escape(heading or 'Актуальный прайс')}</h2>")
-    if body:
-        html_parts.append(_render_rich_paragraphs(body))
-
+    blocks = _text_blocks(price_text, fallback_heading="Актуальный прайс")
+    rich_banner = _effective_media_path("rich_price_header", "greeting_header")
+    if rich_banner is None:
+        bundled_brand = DEFAULT_ASSETS_DIR / "brand.jpg"
+        rich_banner = bundled_brand if bundled_brand.exists() else None
+    if rich_banner is not None:
+        blocks.insert(1, _photo_block(rich_banner, compact=True))
     if base_services:
-        html_parts.append(_render_price_table("Основные услуги", base_services))
+        blocks.append(_price_table("Основные услуги", base_services))
     if addon_services:
-        html_parts.append(_render_price_table("Дополнительно", addon_services))
+        blocks.append(_price_table("Дополнительно", addon_services))
     if not base_services and not addon_services:
-        html_parts.append("<p>Активных услуг пока нет.</p>")
+        blocks.append(InputRichBlockParagraph(text="Активных услуг пока нет."))
 
-    return InputRichMessage(html="".join(html_parts), media=media)
+    return RichPreview(
+        standard_text=price_text.strip() or defaults["price"],
+        standard_media_path=_effective_media_path("price"),
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
+async def build_rich_price_message(db_session: AsyncSession) -> InputRichMessage:
+    """Keep the original public helper used by existing sandbox integrations."""
+    preview = await build_rich_price_preview(db_session, Settings())
+    return preview.rich_message
+
+
+async def build_rich_about_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the current master profile and a structured rich comparison."""
+    del settings
+    caption = await build_master_profile_caption(db_session)
+    blocks = _text_blocks(caption, fallback_heading="Знакомься — это Ангела")
+    media_path = _effective_media_path("rich_about_inline", "about_master")
+    if media_path is not None:
+        insert_at = min(2, len(blocks))
+        blocks.insert(insert_at, _photo_block(media_path))
+    return RichPreview(
+        standard_text=caption,
+        standard_media_path=_effective_media_path("about_master"),
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
+async def build_rich_address_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the current public address and an inline-image rich comparison."""
+    del settings
+    address_text = await build_public_address_text(db_session)
+    blocks = _text_blocks(address_text, fallback_heading="Адрес и как добраться")
+    media_path = _effective_media_path("rich_address_landmark", "navigation_public")
+    if media_path is not None:
+        blocks.insert(min(2, len(blocks)), _photo_block(media_path))
+    return RichPreview(
+        standard_text=address_text,
+        standard_media_path=_effective_media_path("navigation_public"),
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
+def _preview_datetime(settings: Settings) -> tuple[str, str]:
+    local = datetime.now(ZoneInfo(settings.tz)) + timedelta(days=1)
+    return local.strftime("%d.%m.%Y"), "14:00"
+
+
+async def build_rich_reminder_24h_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build a standard/rich preview for the day-before reminder."""
+    date_label, time_label = _preview_datetime(settings)
+    address = await load_studio_address_copy_text(SettingRepository(db_session))
+    values = {
+        "name": "Мария",
+        "display_name": "Мария",
+        "date": date_label,
+        "time": time_label,
+        "service": "Покрытие гель-лак",
+        "service_name": "Покрытие гель-лак",
+        "address": address,
+        "address_short": address,
+        "address_text": address,
+    }
+    template = await TemplateRepository(db_session).get_content_or_default(
+        "reminder_24h",
+        texts.DEFAULT_REMINDER_24H_TEMPLATE,
+    )
+    standard = render_template_text(template, values).strip()
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text="Завтра встречаемся, Мария 🌸", size=2),
+        InputRichBlockParagraph(
+            text=["📅 ", RichTextBold(text=f"{date_label}, в {time_label}")]
+        ),
+        InputRichBlockParagraph(
+            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
+        ),
+        InputRichBlockParagraph(text=f"📍 {address}"),
+        InputRichBlockDivider(),
+        InputRichBlockParagraph(text="Всё в силе?"),
+    ]
+    return RichPreview(standard_text=standard, rich_message=InputRichMessage(blocks=blocks))
+
+
+async def build_rich_reminder_2h_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build a standard/rich preview for the immediate pre-visit reminder."""
+    del settings
+    values = {
+        "name": "Мария",
+        "date": "сегодня",
+        "time": "14:00",
+        "service": "Покрытие гель-лак",
+        "service_name": "Покрытие гель-лак",
+    }
+    template = await TemplateRepository(db_session).get_content_or_default(
+        "reminder_2h",
+        texts.DEFAULT_REMINDER_2H_TEMPLATE,
+    )
+    standard = ensure_late_policy_notice(render_template_text(template, values).strip())
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(
+            text=["Уже скоро — сегодня в ", RichTextUnderline(text="14:00")],
+            size=2,
+        ),
+        InputRichBlockParagraph(
+            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
+        ),
+        InputRichBlockDivider(),
+        InputRichBlockParagraph(
+            text="Если задержишься больше чем на 15 минут — запись может отмениться 🤍"
+        ),
+        InputRichBlockParagraph(
+            text="Если опаздываешь — нажми «⏰ Опаздываю» ниже, я сразу передам Ангеле."
+        ),
+    ]
+    return RichPreview(standard_text=standard, rich_message=InputRichMessage(blocks=blocks))
+
+
+async def build_rich_booking_confirmation_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build a safe sample booking confirmation without creating a booking."""
+    date_label, time_label = _preview_datetime(settings)
+    address = await load_studio_address_copy_text(SettingRepository(db_session))
+    address_block = f"<b>📍 Адрес</b>\n{address}"
+    template = await TemplateRepository(db_session).get_content_or_default(
+        "booking_confirm",
+        texts.DEFAULT_BOOKING_CONFIRM_TEMPLATE,
+    )
+    standard = render_template_text(
+        template,
+        {
+            "name": "Мария",
+            "date": date_label,
+            "time": time_label,
+            "service": "Покрытие гель-лак",
+            "payment": "Наличными",
+            "address": address,
+            "address_block": address_block,
+        },
+    ).strip()
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text="Записала тебя ✨", size=2),
+        InputRichBlockParagraph(
+            text=["📅 ", RichTextBold(text=f"{date_label} · {time_label}")]
+        ),
+        InputRichBlockParagraph(
+            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
+        ),
+        InputRichBlockParagraph(text=["💳 ", RichTextBold(text="Наличными")]),
+        InputRichBlockDivider(),
+        InputRichBlockParagraph(text=f"📍 {address}"),
+    ]
+    media_path = _effective_media_path("booking_confirm")
+    if media_path is not None:
+        blocks.append(_photo_block(media_path))
+    blocks.extend(
+        [
+            InputRichBlockDivider(),
+            InputRichBlockParagraph(text="Напомню за сутки и за 2 часа."),
+            InputRichBlockParagraph(
+                text="Если что-то изменится — открой «Мои записи» в меню 🤍"
+            ),
+            InputRichBlockParagraph(text="До встречи 🌸"),
+        ]
+    )
+    return RichPreview(
+        standard_text=standard,
+        standard_media_path=media_path,
+        rich_message=InputRichMessage(blocks=blocks),
+    )
+
+
+RICH_PREVIEW_DEFINITIONS: tuple[RichPreviewDefinition, ...] = (
+    RichPreviewDefinition("price", "Прайс", build_rich_price_preview),
+    RichPreviewDefinition("about", "Об Ангеле", build_rich_about_preview),
+    RichPreviewDefinition("address", "Адрес", build_rich_address_preview),
+    RichPreviewDefinition("reminder_24h", "Напоминание за сутки", build_rich_reminder_24h_preview),
+    RichPreviewDefinition("reminder_2h", "Напоминание за 2 часа", build_rich_reminder_2h_preview),
+    RichPreviewDefinition(
+        "booking_confirm",
+        "Подтверждение записи",
+        build_rich_booking_confirmation_preview,
+    ),
+)
+
+
+def get_rich_preview_definition(key: str) -> RichPreviewDefinition | None:
+    """Return one registered sandbox preview by its callback key."""
+    return next((item for item in RICH_PREVIEW_DEFINITIONS if item.key == key), None)

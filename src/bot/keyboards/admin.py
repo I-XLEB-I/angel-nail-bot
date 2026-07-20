@@ -24,11 +24,13 @@ from src.services.button_configs import (
     BUTTON_STYLE_DEFAULT,
     BUTTON_STYLE_PRIMARY,
     BUTTON_STYLE_SUCCESS,
+    NAVIGATION_CUSTOM_EMOJI_ID,
     ButtonEditorCategory,
     ClientMenuButtonConfig,
     EditableButtonDefinition,
     resolve_button_style,
 )
+from src.services.rich_messages import RICH_PREVIEW_DEFINITIONS
 
 SLOT_STATUS_ICONS = {
     SlotStatus.FREE: "🟢",
@@ -39,10 +41,15 @@ SLOT_STATUS_ICONS = {
 
 def nav_button(text: str, callback_data: str) -> InlineKeyboardButton:
     """Build a visually consistent admin back/menu/cancel button."""
+    parts = text.split(" ", 1)
+    normalized_text = (
+        parts[1] if len(parts) == 2 and not any(char.isalnum() for char in parts[0]) else text
+    )
     return InlineKeyboardButton(
-        text=text,
+        text=normalized_text,
         callback_data=callback_data,
         style=ButtonStyle.DANGER,
+        icon_custom_emoji_id=NAVIGATION_CUSTOM_EMOJI_ID,
     )
 
 
@@ -190,11 +197,12 @@ def build_admin_all_bookings_summary_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="⬅️ К записям",
-                    callback_data=f"admin_bookings:page:{offset_days}:{int(show_cancelled)}",
+                nav_button(
+                    "⬅️ К записям",
+                    f"admin_bookings:page:{offset_days}:{int(show_cancelled)}",
                 )
-            ]
+            ],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -245,6 +253,7 @@ def build_admin_schedule_delete_menu() -> InlineKeyboardMarkup:
                 )
             ],
             [nav_button("⬅️ К расписанию", "admin_schedule:back")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -417,6 +426,7 @@ def build_admin_button_detail_keyboard(
                 ),
             ],
             [nav_button("⬅️ К разделу", f"admin_buttons:category:{definition.category_key}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -425,7 +435,10 @@ def build_admin_button_detail_keyboard(
 def build_admin_button_prompt_keyboard(editor_id: str) -> InlineKeyboardMarkup:
     """Build a small back keyboard while waiting for admin input."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[[nav_button("⬅️ К кнопке", f"admin_buttons:open:{editor_id}")]]
+        inline_keyboard=[
+            [nav_button("⬅️ К кнопке", f"admin_buttons:open:{editor_id}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
     )
 
 
@@ -494,29 +507,27 @@ def build_schedule_preview_keyboard(*, allow_confirm: bool = True) -> InlineKeyb
             ]
         )
     rows.append([InlineKeyboardButton(text="✏️ Исправить", callback_data="admin_schedule:retry")])
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="admin_schedule:cancel",
-                style=ButtonStyle.DANGER,
-            )
-        ]
-    )
+    rows.append([nav_button("❌ Отмена", "admin_schedule:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_admin_schedule_input_keyboard() -> InlineKeyboardMarkup:
     """Build the keyboard while waiting for a new schedule text."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[[nav_button("⬅️ Назад", "admin_schedule:cancel_input")]]
+        inline_keyboard=[
+            [nav_button("⬅️ Назад", "admin_schedule:cancel_input")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
     )
 
 
 def build_admin_schedule_back_keyboard() -> InlineKeyboardMarkup:
     """Build a compact back button to the root schedule menu."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[[nav_button("⬅️ К расписанию", "admin_schedule:back")]]
+        inline_keyboard=[
+            [nav_button("⬅️ К расписанию", "admin_schedule:back")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
     )
 
 
@@ -555,6 +566,7 @@ def build_admin_schedule_image_keyboard(
             ]
         )
     rows.append([nav_button("⬅️ К расписанию", "admin_schedule:back")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -621,6 +633,7 @@ def build_admin_schedule_week_keyboard(
         ]
     )
     rows.append([nav_button("⬅️ К расписанию", "admin_schedule:back")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -710,15 +723,9 @@ def build_admin_schedule_slot_detail_keyboard(
                 ]
             )
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=back_label,
-                callback_data=back_callback,
-            )
-        ]
-    )
+    rows.append([nav_button(back_label, back_callback)])
     rows.append([nav_button("🏠 К расписанию", "admin_schedule:back")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -784,6 +791,7 @@ def build_admin_schedule_month_keyboard(
         ]
     )
     rows.append([nav_button("⬅️ К расписанию", "admin_schedule:back")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -830,6 +838,7 @@ def build_admin_approval_actions_keyboard(
         )
         if include_back:
             rows.append([nav_button("⬅️ К запросам", "admin_approvals:home")])
+            rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     if kind == ApprovalRequestKind.REPAIR_REQUEST:
@@ -846,7 +855,7 @@ def build_admin_approval_actions_keyboard(
                     text=paid_text,
                     callback_data=f"approval:repair_paid:{approval_id}",
                     style=ButtonStyle.PRIMARY if repair_paid_marked else None,
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -885,6 +894,7 @@ def build_admin_approval_actions_keyboard(
         ]
         if include_back:
             rows.append([nav_button("⬅️ К запросам", "admin_approvals:home")])
+            rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     rows: list[list[InlineKeyboardButton]] = []
@@ -963,6 +973,7 @@ def build_admin_approval_actions_keyboard(
     )
     if include_back:
         rows.append([nav_button("⬅️ К запросам", "admin_approvals:home")])
+        rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1001,13 +1012,8 @@ def build_admin_decline_reason_keyboard(
         ],
     ]
     if include_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу", callback_data=f"admin_approvals:open:{approval_id}"
-                )
-            ]
-        )
+        rows.append([nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")])
+        rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1047,12 +1053,8 @@ def build_admin_repair_decline_confirm_keyboard(approval_id: int) -> InlineKeybo
                     style=ButtonStyle.DANGER,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу",
-                    callback_data=f"admin_approvals:open:{approval_id}",
-                )
-            ],
+            [nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -1068,12 +1070,8 @@ def build_admin_repair_warranty_force_keyboard(approval_id: int) -> InlineKeyboa
                     style=ButtonStyle.DANGER,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу",
-                    callback_data=f"admin_approvals:open:{approval_id}",
-                )
-            ],
+            [nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -1150,13 +1148,8 @@ def build_admin_approval_slot_keyboard(
         )
 
     if include_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу", callback_data=f"admin_approvals:open:{approval_id}"
-                )
-            ]
-        )
+        rows.append([nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")])
+        rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1177,11 +1170,7 @@ def build_admin_proxy_reply_prompt_keyboard(approval_id: int) -> InlineKeyboardM
     """Build navigation while waiting for an admin proxy reply."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К запросу", callback_data=f"admin_approvals:open:{approval_id}"
-                )
-            ],
+            [nav_button("⬅️ К запросу", f"admin_approvals:open:{approval_id}")],
             [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
@@ -1381,11 +1370,8 @@ def build_admin_service_edit_fields_keyboard(service_id: int) -> InlineKeyboardM
                     callback_data=f"admin_service:field:{service_id}:price_variable",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К услуге", callback_data=f"admin_service:open:{service_id}"
-                )
-            ],
+            [nav_button("⬅️ К услуге", f"admin_service:open:{service_id}")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -1436,13 +1422,7 @@ def build_admin_service_create_confirm_keyboard(
                     style=ButtonStyle.SUCCESS,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data=cancel_callback,
-                    style=ButtonStyle.DANGER,
-                )
-            ],
+            [nav_button("❌ Отмена", cancel_callback)],
         ]
     )
 
@@ -1451,7 +1431,12 @@ def build_admin_service_prompt_cancel_keyboard(
     callback_data: str = "admin_service:home",
 ) -> InlineKeyboardMarkup:
     """Build a compact cancel/back button for service input steps."""
-    return InlineKeyboardMarkup(inline_keyboard=[[nav_button("⬅️ Отмена", callback_data)]])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [nav_button("⬅️ Отмена", callback_data)],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
+    )
 
 
 def build_admin_service_detail_keyboard(service: Service) -> InlineKeyboardMarkup:
@@ -1478,6 +1463,7 @@ def build_admin_service_detail_keyboard(service: Service) -> InlineKeyboardMarku
                 )
             ],
             [nav_button("⬅️ К услугам", "admin_service:home")],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -1716,8 +1702,13 @@ def build_admin_clients_home_keyboard() -> InlineKeyboardMarkup:
 def build_admin_clients_back_keyboard(
     callback_data: str = "admin_clients:home",
 ) -> InlineKeyboardMarkup:
-    """Build a one-button back keyboard for the clients section."""
-    return InlineKeyboardMarkup(inline_keyboard=[[nav_button("⬅️ К клиентам", callback_data)]])
+    """Build back and direct-main-menu actions for the clients section."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [nav_button("⬅️ К клиентам", callback_data)],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
+        ]
+    )
 
 
 def build_admin_client_search_results_keyboard(
@@ -1731,6 +1722,7 @@ def build_admin_client_search_results_keyboard(
         for user_id, label in items
     ]
     rows.append([nav_button("⬅️ К клиентам", back_callback)])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1766,6 +1758,7 @@ def build_admin_clients_page_keyboard(
         )
     rows.append(nav_row)
     rows.append([nav_button("⬅️ К клиентам", "admin_clients:home")])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1808,6 +1801,7 @@ def build_admin_client_main_keyboard(
             )
         ],
         [nav_button("⬅️ К списку", back_callback)],
+        [nav_button("🏠 Главное меню", "admin_menu:home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -2077,6 +2071,7 @@ def build_admin_booking_card_keyboard(
             ]
         )
     rows.append([nav_button("⬅️ Назад", back_callback)])
+    rows.append([nav_button("🏠 Главное меню", "admin_menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2108,11 +2103,12 @@ def build_admin_client_confirm_action_keyboard(
                 )
             ],
             [
-                InlineKeyboardButton(
-                    text="⬅️ Не менять",
-                    callback_data=_build_client_screen_callback(view, user_id, back_callback),
+                nav_button(
+                    "⬅️ Не менять",
+                    _build_client_screen_callback(view, user_id, back_callback),
                 )
             ],
+            [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
 
@@ -2147,15 +2143,7 @@ def build_admin_stats_period_keyboard(period: str) -> InlineKeyboardMarkup:
 def build_admin_broadcast_input_keyboard() -> InlineKeyboardMarkup:
     """Build a cancel button while waiting for the broadcast text."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Отмена",
-                    callback_data="admin_broadcast:cancel",
-                    style=ButtonStyle.DANGER,
-                )
-            ]
-        ]
+        inline_keyboard=[[nav_button("⬅️ Отмена", "admin_broadcast:cancel")]]
     )
 
 
@@ -2170,13 +2158,7 @@ def build_admin_broadcast_preview_keyboard(recipient_count: int) -> InlineKeyboa
                     style=ButtonStyle.SUCCESS,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="admin_broadcast:cancel",
-                    style=ButtonStyle.DANGER,
-                )
-            ],
+            [nav_button("❌ Отмена", "admin_broadcast:cancel")],
         ]
     )
 
@@ -2325,12 +2307,7 @@ def build_admin_template_detail_keyboard(
             )
     rows.extend(
         [
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data=back_callback,
-                )
-            ],
+            [nav_button("⬅️ Назад", back_callback)],
             [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
@@ -2341,13 +2318,7 @@ def build_admin_template_edit_cancel_keyboard() -> InlineKeyboardMarkup:
     """Build a cancel button for template-edit mode."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Отмена",
-                    callback_data="admin_templates:cancel_edit",
-                    style=ButtonStyle.DANGER,
-                )
-            ],
+            [nav_button("⬅️ Отмена", "admin_templates:cancel_edit")],
             [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
@@ -2364,12 +2335,7 @@ def build_admin_template_warning_keyboard() -> InlineKeyboardMarkup:
                     style=ButtonStyle.SUCCESS,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Вернуться к редактированию",
-                    callback_data="admin_templates:back_to_edit",
-                )
-            ],
+            [nav_button("⬅️ Вернуться к редактированию", "admin_templates:back_to_edit")],
             [nav_button("🏠 Главное меню", "admin_menu:home")],
         ]
     )
@@ -2510,15 +2476,18 @@ def build_admin_settings_edit_keyboard() -> InlineKeyboardMarkup:
 
 def build_admin_rich_test_keyboard() -> InlineKeyboardMarkup:
     """Build the admin-only rich sandbox actions."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🖼 Rich прайс-превью",
-                    callback_data="admin_rich_test:price_preview",
-                    style=ButtonStyle.PRIMARY,
-                )
-            ],
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"🧪 {definition.title}",
+                callback_data=f"admin_rich_test:preview:{definition.key}",
+                style=ButtonStyle.PRIMARY,
+            )
+        ]
+        for definition in RICH_PREVIEW_DEFINITIONS
+    ]
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="✉️ Тест-рассылка",
@@ -2529,6 +2498,63 @@ def build_admin_rich_test_keyboard() -> InlineKeyboardMarkup:
             [nav_button("⬅️ В меню", "admin_menu:home")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_admin_rich_comparison_keyboard(
+    preview_key: str,
+    *,
+    rich: bool,
+) -> InlineKeyboardMarkup:
+    """Build safe visual-only actions under one standard/rich preview."""
+    variant_label = "Rich вариант" if rich else "Обычный вариант"
+    action_labels: dict[str, tuple[tuple[str, ButtonStyle], ...]] = {
+        "price": (
+            ("📅 Записаться", ButtonStyle.SUCCESS),
+            ("🏠 Главное меню", ButtonStyle.DANGER),
+        ),
+        "about": (
+            ("📸 Открыть канал", ButtonStyle.PRIMARY),
+            ("🏠 Главное меню", ButtonStyle.DANGER),
+        ),
+        "address": (
+            ("🗺 Открыть карту", ButtonStyle.PRIMARY),
+            ("🏠 Главное меню", ButtonStyle.DANGER),
+        ),
+        "reminder_24h": (
+            ("✅ Буду", ButtonStyle.SUCCESS),
+            ("❌ Не смогу — перенести/отменить", ButtonStyle.DANGER),
+        ),
+        "reminder_2h": (
+            ("✅ Буду", ButtonStyle.SUCCESS),
+            ("❌ Не смогу — перенести/отменить", ButtonStyle.DANGER),
+            ("⏰ Опаздываю", ButtonStyle.PRIMARY),
+        ),
+        "booking_confirm": (
+            ("🙋‍♀️ Мои записи", ButtonStyle.PRIMARY),
+            ("🏠 Главное меню", ButtonStyle.DANGER),
+        ),
+    }
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=variant_label,
+                callback_data="admin_rich_test:noop",
+                style=ButtonStyle.PRIMARY,
+            )
+        ]
+    ]
+    rows.extend(
+        [
+            InlineKeyboardButton(
+                text=label,
+                callback_data="admin_rich_test:noop",
+                style=style,
+            )
+        ]
+        for label, style in action_labels.get(preview_key, ())
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_admin_rich_test_input_keyboard() -> InlineKeyboardMarkup:
@@ -2552,12 +2578,6 @@ def build_admin_rich_test_preview_keyboard() -> InlineKeyboardMarkup:
                     style=ButtonStyle.SUCCESS,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="admin_rich_test:broadcast_cancel",
-                    style=ButtonStyle.DANGER,
-                )
-            ],
+            [nav_button("❌ Отмена", "admin_rich_test:broadcast_cancel")],
         ]
     )

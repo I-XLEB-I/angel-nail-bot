@@ -185,7 +185,7 @@ async def test_send_due_reminders_marks_24h_sent(monkeypatch) -> None:
     await reminders.send_due_reminders(bot, settings)
 
     assert len(bot.messages) == 1
-    assert "напоминаю о записи" in str(bot.messages[0]["text"]).lower()
+    assert "завтра встречаемся" in str(bot.messages[0]["text"]).lower()
     assert "всё в силе?" in str(bot.messages[0]["text"]).lower()
     assert "Новая улица, 12" in str(bot.messages[0]["text"])
 
@@ -198,7 +198,7 @@ async def test_send_due_reminders_marks_24h_sent(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_24h_reminder_text_appends_late_policy_when_template_lacks_it() -> None:
+async def test_build_24h_reminder_text_does_not_append_late_policy() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -226,9 +226,8 @@ async def test_build_24h_reminder_text_appends_late_policy_when_template_lacks_i
             tz_name="Europe/Moscow",
         )
 
-    assert "15 минут" in text
-    assert "запись может отмениться" in text.lower()
-    assert text.count("15 минут") == 1
+    assert "15 минут" not in text
+    assert "запись может отмениться" not in text.lower()
 
     await engine.dispose()
 
@@ -504,7 +503,8 @@ async def test_send_due_reminders_still_sends_2h_after_24h_confirmation(monkeypa
     await reminders.send_due_reminders(bot, settings)
 
     assert len(bot.messages) == 1
-    assert "через ~2 часа" in str(bot.messages[0]["text"]).lower()
+    assert "уже скоро" in str(bot.messages[0]["text"]).lower()
+    assert "⏰ опаздываю" in str(bot.messages[0]["text"]).lower()
 
     async with session_factory() as session:
         booking = await session.get(Booking, booking_id)

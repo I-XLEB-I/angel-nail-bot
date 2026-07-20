@@ -85,7 +85,7 @@ async def build_24h_reminder_text(
             "address_text": address_text,
         },
     )
-    return ensure_late_policy_notice(text)
+    return text
 
 
 async def build_2h_reminder_text(
@@ -240,6 +240,7 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
                         booking.id,
                         button_configs=button_configs,
                     ),
+                    parse_mode="HTML",
                 )
                 booking.reminder_2h_sent_at = now_utc
                 await session.commit()

@@ -1100,7 +1100,7 @@ async def test_save_template_content_warns_about_missing_and_unknown_placeholder
         assert "{datatime}" in warning_text
         labels = [button.text for row in warning_markup.inline_keyboard for button in row]
         assert "✅ Сохранить всё равно" in labels
-        assert "⬅️ Вернуться к редактированию" in labels
+        assert "Вернуться к редактированию" in labels
 
     await engine.dispose()
 

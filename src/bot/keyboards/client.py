@@ -22,21 +22,13 @@ from src.services.booking import (
 from src.services.button_configs import (
     ANGELA_CHAT_URL,
     DEFAULT_ADDRESS_MAP_URL,
+    NAVIGATION_CUSTOM_EMOJI_ID,
     PORTFOLIO_CUSTOM_EMOJI_ID,
     ClientMenuButtonConfig,
     EditableButtonDefinition,
     get_client_main_menu_button_definition,
     resolve_button_style,
 )
-
-
-def nav_button(text: str, callback_data: str) -> InlineKeyboardButton:
-    """Build a visually consistent back/menu navigation button."""
-    return InlineKeyboardButton(
-        text=text,
-        callback_data=callback_data,
-        style=ButtonStyle.DANGER,
-    )
 
 
 def _build_copy_text_button(label: str, value: str) -> InlineKeyboardButton:
@@ -149,6 +141,7 @@ def _build_runtime_callback_button(
     callback_data: str,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
     icon_custom_emoji_id: str | None = None,
+    icon_override: str | None = None,
     text_override: str | None = None,
 ) -> InlineKeyboardButton:
     """Build a runtime-configured callback button with a dynamic destination."""
@@ -162,18 +155,15 @@ def _build_runtime_callback_button(
             icon_custom_emoji_id=icon_custom_emoji_id,
         ),
     )
-    button_text = (
-        _prepare_runtime_override_text(
-            text_override,
-            icon_custom_emoji_id=config.icon_custom_emoji_id,
-        )
-        if text_override is not None
-        else config.text
+    effective_icon = icon_override or config.icon_custom_emoji_id
+    button_text = _prepare_runtime_override_text(
+        text_override if text_override is not None else config.text,
+        icon_custom_emoji_id=effective_icon,
     )
     kwargs: dict[str, object] = {
         "text": button_text,
         "callback_data": callback_data,
-        "icon_custom_emoji_id": config.icon_custom_emoji_id,
+        "icon_custom_emoji_id": effective_icon,
     }
     style = resolve_button_style(config.style_name)
     if style is not None:
@@ -305,6 +295,7 @@ def back_button(
         fallback_style_name="danger",
         callback_data=callback_data,
         button_configs=button_configs,
+        icon_override=_navigation_icon_custom_emoji_id(button_configs),
         text_override=text_override,
     )
 
@@ -322,7 +313,63 @@ def cancel_back_button(
         fallback_style_name="danger",
         callback_data=callback_data,
         button_configs=button_configs,
+        icon_override=_navigation_icon_custom_emoji_id(button_configs),
     )
+
+
+def _navigation_icon_custom_emoji_id(
+    button_configs: dict[str, ClientMenuButtonConfig] | None,
+) -> str:
+    """Resolve one premium icon shared by back, home and navigation-cancel buttons."""
+    for key in ("common.back", "back", "common.cancel_back", "cancel_back"):
+        config = (button_configs or {}).get(key)
+        if config is not None and config.icon_custom_emoji_id:
+            return config.icon_custom_emoji_id
+    return NAVIGATION_CUSTOM_EMOJI_ID
+
+
+def home_button(
+    callback_data: str = "client_menu:back",
+    *,
+    button_configs: dict[str, ClientMenuButtonConfig] | None = None,
+) -> InlineKeyboardButton:
+    """Build the direct-to-main-menu action using the shared navigation appearance."""
+    return _build_runtime_callback_button(
+        category_key="common",
+        key="back",
+        fallback_text="⬅️ Назад",
+        fallback_style_name="danger",
+        callback_data=callback_data,
+        button_configs=button_configs,
+        icon_override=_navigation_icon_custom_emoji_id(button_configs),
+        text_override="🏠 Главное меню",
+    )
+
+
+def navigation_rows(
+    back_callback: str,
+    *,
+    button_configs: dict[str, ClientMenuButtonConfig] | None = None,
+    back_text: str | None = None,
+    cancel_callback: str | None = None,
+) -> list[list[InlineKeyboardButton]]:
+    """Return canonical bottom navigation: back first, then direct exit."""
+    return [
+        [
+            back_button(
+                back_callback,
+                button_configs=button_configs,
+                text_override=back_text,
+            )
+        ],
+        [
+            (
+                cancel_back_button(cancel_callback, button_configs=button_configs)
+                if cancel_callback is not None
+                else home_button(button_configs=button_configs)
+            )
+        ],
+    ]
 
 
 def cancel_action_button(
@@ -338,6 +385,7 @@ def cancel_action_button(
         fallback_style_name="danger",
         callback_data=callback_data,
         button_configs=button_configs,
+        icon_override=_navigation_icon_custom_emoji_id(button_configs),
     )
 
 
@@ -345,8 +393,9 @@ def done_button(
     callback_data: str,
     *,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
+    text_override: str | None = None,
 ) -> InlineKeyboardButton:
-    """Build the shared editable `Готово` button."""
+    """Build a positive completion action from the shared editable `Готово` config."""
     return _build_runtime_callback_button(
         category_key="common",
         key="done",
@@ -354,6 +403,7 @@ def done_button(
         fallback_style_name="success",
         callback_data=callback_data,
         button_configs=button_configs,
+        text_override=text_override,
     )
 
 
@@ -474,7 +524,7 @@ def build_services_actions_keyboard(
         inline_keyboard=[
             [_build_book_cta_button(button_configs=button_configs)],
             [_build_browse_cta_button(button_configs=button_configs)],
-            [back_button("client_menu:back", button_configs=button_configs)],
+            [home_button(button_configs=button_configs)],
         ]
     )
 
@@ -496,7 +546,7 @@ def build_portfolio_keyboard(
             ],
             [_build_book_cta_button(button_configs=button_configs)],
             [_build_browse_cta_button(button_configs=button_configs)],
-            [back_button("client_menu:back", button_configs=button_configs)],
+            [home_button(button_configs=button_configs)],
         ]
     )
 
@@ -506,10 +556,10 @@ def build_back_to_menu_keyboard(
     callback_data: str = "client_menu:back",
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Build a single back button."""
+    """Build a direct return to the client main menu."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [back_button(callback_data, button_configs=button_configs)],
+            [home_button(callback_data, button_configs=button_configs)],
         ]
     )
 
@@ -540,7 +590,7 @@ def build_vitrine_actions_keyboard(
         [
             [_build_book_cta_button(button_configs=button_configs)],
             [_build_browse_cta_button(button_configs=button_configs)],
-            [back_button("client_menu:back", button_configs=button_configs)],
+            [home_button(button_configs=button_configs)],
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -592,7 +642,7 @@ def build_client_fallback_keyboard(
                 ),
             ],
             [
-                back_button("client_menu:back", button_configs=button_configs),
+                home_button(button_configs=button_configs),
             ],
         ]
     )
@@ -627,7 +677,7 @@ def build_client_card_keyboard(
                 )
             ]
         )
-    rows.append([back_button("client_menu:back", button_configs=button_configs)])
+    rows.append([home_button(button_configs=button_configs)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -641,7 +691,7 @@ def build_my_bookings_list_keyboard(
         [InlineKeyboardButton(text=label, callback_data=f"my_bookings:open:{booking_id}")]
         for booking_id, label in items
     ]
-    rows.append([back_button("client_menu:back", button_configs=button_configs)])
+    rows.append([home_button(button_configs=button_configs)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -717,7 +767,7 @@ def build_my_bookings_overview_keyboard(
                 )
             ]
         )
-    rows.append([back_button("client_menu:back", button_configs=button_configs)])
+    rows.append([home_button(button_configs=button_configs)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -731,7 +781,12 @@ def build_my_bookings_history_keyboard(
         [InlineKeyboardButton(text=label, callback_data=f"my_bookings:open:{booking_id}")]
         for booking_id, label in items
     ]
-    rows.append([back_button("my_bookings:overview", button_configs=button_configs)])
+    rows.extend(
+        navigation_rows(
+            "my_bookings:overview",
+            button_configs=button_configs,
+        )
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -751,7 +806,7 @@ def build_my_bookings_empty_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button("client_menu:back", button_configs=button_configs)],
+            [home_button(button_configs=button_configs)],
         ]
     )
 
@@ -816,14 +871,12 @@ def build_booking_card_keyboard(
             ]
         )
 
-    rows.append(
-        [
-            back_button(
-                "my_bookings:overview",
-                button_configs=button_configs,
-                text_override="⬅️ К моим записям",
-            )
-        ]
+    rows.extend(
+        navigation_rows(
+            "my_bookings:overview",
+            button_configs=button_configs,
+            back_text="⬅️ К моим записям",
+        )
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -842,7 +895,10 @@ def build_cancel_pre_confirm_keyboard(
                     callback_data=f"my_bookings:cancel_pre_confirm:{booking_id}",
                 )
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -891,7 +947,10 @@ def build_cancel_reason_keyboard(
                     callback_data=f"my_bookings:cancel_reason:{booking_id}:other",
                 )
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -911,7 +970,10 @@ def build_cancel_warning_keyboard(
                     style=ButtonStyle.DANGER,
                 )
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -921,11 +983,12 @@ def build_back_to_booking_keyboard(
     *,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Build a single back button to a booking card."""
+    """Build back and direct-main-menu actions from a nested booking screen."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
-        ]
+        inline_keyboard=navigation_rows(
+            f"my_bookings:open:{booking_id}",
+            button_configs=button_configs,
+        )
     )
 
 
@@ -943,9 +1006,9 @@ def build_booking_action_result_keyboard(
                     fallback_style_name="primary",
                     callback_data="my_bookings:overview",
                     button_configs=button_configs,
-                ),
-                back_button("client_menu:back", button_configs=button_configs),
-            ]
+                )
+            ],
+            [home_button(button_configs=button_configs)],
         ]
     )
 
@@ -1005,14 +1068,7 @@ def build_post_booking_cta_keyboard(
             )
         ]
     )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=texts.POST_BOOKING_MENU_BUTTON_TEXT,
-                callback_data="client:to_menu",
-            )
-        ]
-    )
+    rows.append([home_button("client:to_menu", button_configs=button_configs)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1201,7 +1257,10 @@ def build_late_notice_minutes_keyboard(
                     callback_data=f"my_bookings:late_minutes:{booking_id}:30",
                 ),
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -1251,7 +1310,10 @@ def build_late_notice_reason_keyboard(
                     callback_data=f"my_bookings:late_reason:{booking_id}:{minutes}:skip",
                 )
             ],
-            [back_button(f"my_bookings:late:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:late:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -1274,7 +1336,12 @@ def build_late_notice_result_keyboard(
                 )
             ]
         )
-    rows.append([back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)])
+    rows.extend(
+        navigation_rows(
+            f"my_bookings:open:{booking_id}",
+            button_configs=button_configs,
+        )
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1295,7 +1362,10 @@ def build_repair_nails_keyboard(
                 InlineKeyboardButton(text="4", callback_data=f"repair:nails:{booking_id}:4"),
                 InlineKeyboardButton(text="5+", callback_data=f"repair:nails:{booking_id}:5"),
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -1338,7 +1408,10 @@ def build_repair_issue_keyboard(
                     callback_data=f"repair:issue:{booking_id}:other",
                 )
             ],
-            [back_button(f"repair:start:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"repair:start:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
 
@@ -1370,14 +1443,11 @@ def build_repair_photos_keyboard(
                 )
             ]
         )
-    rows.append(
-        [
-            back_button(
-                f"repair:photos_back:{booking_id}",
-                button_configs=button_configs,
-                text_override="⬅️ Назад",
-            )
-        ]
+    rows.extend(
+        navigation_rows(
+            f"repair:photos_back:{booking_id}",
+            button_configs=button_configs,
+        )
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1389,14 +1459,10 @@ def build_repair_description_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build the back action for the repair-description step."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                back_button(
-                    f"repair:description_back:{booking_id}",
-                    button_configs=button_configs,
-                )
-            ]
-        ]
+        inline_keyboard=navigation_rows(
+            f"repair:description_back:{booking_id}",
+            button_configs=button_configs,
+        )
     )
 
 
@@ -1580,11 +1646,13 @@ def build_addons_keyboard(
             ]
         )
 
-    rows.append(
-        [
-            done_button("booking:addons_done", button_configs=button_configs),
-            back_button("booking:addons_back", button_configs=button_configs),
-        ]
+    rows.append([done_button("booking:addons_done", button_configs=button_configs)])
+    rows.extend(
+        navigation_rows(
+            "booking:addons_back",
+            button_configs=button_configs,
+            cancel_callback="booking:cancel",
+        )
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1614,7 +1682,11 @@ def build_payment_method_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button("booking:payment_back", button_configs=button_configs)],
+            *navigation_rows(
+                "booking:payment_back",
+                button_configs=button_configs,
+                cancel_callback="booking:cancel",
+            ),
         ]
     )
 
@@ -1648,7 +1720,11 @@ def build_days_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button("booking:day_back", button_configs=button_configs)],
+            *navigation_rows(
+                "booking:day_back",
+                button_configs=button_configs,
+                cancel_callback="booking:cancel",
+            ),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1709,7 +1785,11 @@ def build_schedule_days_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button("booking:day_back", button_configs=button_configs)],
+            *navigation_rows(
+                "booking:day_back",
+                button_configs=button_configs,
+                cancel_callback="booking:cancel",
+            ),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1773,7 +1853,10 @@ def build_reschedule_schedule_days_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)],
+            *navigation_rows(
+                f"my_bookings:open:{booking_id}",
+                button_configs=button_configs,
+            ),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1787,9 +1870,9 @@ def build_reschedule_days_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build the day selection keyboard for rescheduling."""
     day_buttons = [
-            InlineKeyboardButton(
-                text=day_option.label,
-                callback_data=f"my_bookings:reschedule_day:{booking_id}:{day_option.local_date.isoformat()}",
+        InlineKeyboardButton(
+            text=day_option.label,
+            callback_data=f"my_bookings:reschedule_day:{booking_id}:{day_option.local_date.isoformat()}",
         )
         for day_option in day_options
     ]
@@ -1809,7 +1892,12 @@ def build_reschedule_days_keyboard(
             )
         ]
     )
-    rows.append([back_button(f"my_bookings:open:{booking_id}", button_configs=button_configs)])
+    rows.extend(
+        navigation_rows(
+            f"my_bookings:open:{booking_id}",
+            button_configs=button_configs,
+        )
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1827,7 +1915,7 @@ def build_no_slots_keyboard(
                     contact_url=contact_url,
                 )
             ],
-            [back_button("client_menu:back", button_configs=button_configs)],
+            [home_button(button_configs=button_configs)],
         ]
     )
 
@@ -1862,7 +1950,11 @@ def build_times_keyboard(
                     button_configs=button_configs,
                 )
             ],
-            [back_button("booking:time_back", button_configs=button_configs)],
+            *navigation_rows(
+                "booking:time_back",
+                button_configs=button_configs,
+                cancel_callback="booking:cancel",
+            ),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1900,14 +1992,12 @@ def build_reschedule_times_keyboard(
             )
         ]
     )
-    rows.append(
-        [
-            back_button(
-                f"my_bookings:reschedule_days_back:{booking_id}",
-                button_configs=button_configs,
-                text_override="⬅️ К дням",
-            )
-        ]
+    rows.extend(
+        navigation_rows(
+            f"my_bookings:reschedule_days_back:{booking_id}",
+            button_configs=button_configs,
+            back_text="⬅️ К дням",
+        )
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1972,13 +2062,13 @@ def build_confirm_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="✅ Подтвердить",
-                    callback_data="booking:confirm",
-                    style=ButtonStyle.SUCCESS,
-                ),
-                back_button("booking:confirm_back", button_configs=button_configs),
+                done_button(
+                    "booking:confirm",
+                    button_configs=button_configs,
+                    text_override="✅ Подтвердить",
+                )
             ],
+            [back_button("booking:confirm_back", button_configs=button_configs)],
             [cancel_action_button("booking:cancel", button_configs=button_configs)],
         ]
     )

@@ -32,7 +32,7 @@ def test_phase11_texts_keep_runtime_placeholders_normalized() -> None:
     assert "Подъезд 1 код #7496#" in texts.DEFAULT_ADDRESS_POST_CONFIRM
     assert "Этаж 5 кв 56" in texts.DEFAULT_ADDRESS_POST_CONFIRM
     assert "загляни, там все последние дизайны." in texts.PORTFOLIO_INTRO
-    assert "АКТУАЛЬНЫЙ ПРАЙС" in texts.DEFAULT_PRICE_TEMPLATE
+    assert "Актуальный прайс" in texts.DEFAULT_PRICE_TEMPLATE
 
 
 def test_literal_template_key_is_not_used_as_menu_header() -> None:

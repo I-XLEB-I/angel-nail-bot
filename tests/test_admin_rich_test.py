@@ -43,6 +43,7 @@ class FakeBot:
     def __init__(self) -> None:
         self.edits: list[dict[str, object | None]] = []
         self.sent_messages: list[dict[str, object | None]] = []
+        self.sent_photos: list[dict[str, object | None]] = []
         self.copied_messages: list[dict[str, object | None]] = []
         self.deleted_messages: list[dict[str, int]] = []
         self.sent_rich_messages: list[dict[str, object]] = []
@@ -110,10 +111,37 @@ class FakeBot:
     async def delete_message(self, *, chat_id: int, message_id: int) -> None:
         self.deleted_messages.append({"chat_id": chat_id, "message_id": message_id})
 
-    async def send_rich_message(self, *, chat_id: int, rich_message):
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo,
+        caption: str,
+        reply_markup=None,
+        parse_mode=None,
+    ):
+        payload = {
+            "chat_id": chat_id,
+            "photo": photo,
+            "caption": caption,
+            "reply_markup": reply_markup,
+            "parse_mode": parse_mode,
+        }
+        self.sent_photos.append(payload)
+        return type(
+            "PhotoMessageRef",
+            (),
+            {
+                "chat": FakeChat(chat_id),
+                "message_id": len(self.sent_photos) + 500,
+            },
+        )()
+
+    async def send_rich_message(self, *, chat_id: int, rich_message, reply_markup=None):
         payload = {
             "chat_id": chat_id,
             "rich_message": rich_message,
+            "reply_markup": reply_markup,
         }
         self.sent_rich_messages.append(payload)
         return type(
@@ -258,17 +286,21 @@ async def test_build_rich_price_message_includes_media_when_available() -> None:
 
         rich_message = await rich_messages_service.build_rich_price_message(session)
 
-        assert rich_message.media is not None
-        assert "Маникюр" in str(rich_message.html)
-        assert "Дизайн" in str(rich_message.html)
-        assert "Основные услуги" in str(rich_message.html)
-        assert "Дополнительно" in str(rich_message.html)
+        assert rich_message.blocks is not None
+        assert "InputRichBlockPhoto" in str(rich_message.blocks)
+        assert "Маникюр" in str(rich_message.blocks)
+        assert "Дизайн" in str(rich_message.blocks)
+        assert "Основные услуги" in str(rich_message.blocks)
+        assert "Дополнительно" in str(rich_message.blocks)
 
     await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_build_rich_price_message_skips_media_when_disabled(monkeypatch) -> None:
+async def test_build_rich_price_message_skips_media_when_disabled(
+    monkeypatch,
+    tmp_path,
+) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -290,10 +322,61 @@ async def test_build_rich_price_message_skips_media_when_disabled(monkeypatch) -
         await session.commit()
 
         monkeypatch.setattr(rich_messages_service, "has_template_media", lambda key: False)
+        monkeypatch.setattr(rich_messages_service, "DEFAULT_ASSETS_DIR", tmp_path)
         rich_message = await rich_messages_service.build_rich_price_message(session)
 
         assert rich_message.media is None
-        assert "Маникюр" in str(rich_message.html)
+        assert "InputRichBlockPhoto" not in str(rich_message.blocks)
+        assert "Маникюр" in str(rich_message.blocks)
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_registered_preview_sends_standard_then_rich() -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        await SettingRepository(session).upsert(key="rich_messages_test_enabled", value="true")
+        await session.commit()
+        bot = FakeBot()
+        callback = FakeCallback(
+            "admin_rich_test:preview:reminder_2h",
+            message=FakeMessage(bot=bot, message_id=555),
+            bot=bot,
+        )
+        state = FakeState(
+            {
+                "admin_panel_chat_id": 500,
+                "admin_panel_message_id": 77,
+            }
+        )
+
+        await rich_test_handler.send_rich_price_preview(
+            callback,
+            state,
+            db_session=session,
+            is_admin=True,
+            settings=settings,
+        )
+
+        assert len(bot.sent_messages) == 1
+        assert "15 минут" in str(bot.sent_messages[0]["text"])
+        assert len(bot.sent_rich_messages) == 1
+        assert "InputRichBlockSectionHeading" in str(
+            bot.sent_rich_messages[0]["rich_message"].blocks
+        )
+        assert bot.sent_messages[0]["reply_markup"].inline_keyboard[0][0].text == (
+            "Обычный вариант"
+        )
+        assert bot.sent_rich_messages[0]["reply_markup"].inline_keyboard[0][0].text == (
+            "Rich вариант"
+        )
 
     await engine.dispose()
 
