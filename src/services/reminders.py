@@ -379,10 +379,13 @@ async def send_winback_prompts(bot: Bot, settings: Settings) -> None:
                     template_key="winback_lapsed",
                     reply_markup=build_repeat_prompt_keyboard(button_configs=button_configs),
                 )
-                user.winback_sent_at = now_utc
+                await booking_repository.mark_winback_sent(
+                    user_id=user.user_id,
+                    sent_at=now_utc,
+                )
                 await session.commit()
             except Exception:
-                logger.exception("Failed to send win-back message to user %s", user.id)
+                logger.exception("Failed to send win-back message to user %s", user.user_id)
                 await session.rollback()
 
 

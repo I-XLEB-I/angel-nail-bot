@@ -893,6 +893,81 @@ async def test_send_winback_prompts_respects_vacation_mode(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_winback_continues_after_one_delivery_failure(monkeypatch) -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        users = [
+            User(tg_id=5001, display_name="Первая", is_blocked=False),
+            User(tg_id=5002, display_name="Вторая", is_blocked=False),
+        ]
+        slots = [
+            Slot(start_at=now - timedelta(days=91), status=SlotStatus.BOOKED),
+            Slot(start_at=now - timedelta(days=90), status=SlotStatus.BOOKED),
+        ]
+        session.add_all([service, *users, *slots])
+        await session.flush()
+        session.add_all(
+            [
+                Booking(
+                    client=users[index],
+                    slot=slots[index],
+                    base_service=service,
+                    addons=[],
+                    design_photos=[],
+                    fixed_price=2400,
+                    has_variable_price=False,
+                    status=BookingStatus.COMPLETED,
+                )
+                for index in range(2)
+            ]
+        )
+        await session.commit()
+        user_ids = [user.id for user in users]
+
+    monkeypatch.setattr(
+        reminders, "session_scope", lambda _settings: make_session_scope(session_factory)
+    )
+    delivered: list[int] = []
+
+    async def fake_send_brand_bot_message(*, chat_id: int, **_kwargs) -> None:
+        if chat_id == 5001:
+            raise RuntimeError("bot was blocked")
+        delivered.append(chat_id)
+
+    monkeypatch.setattr(
+        reminders,
+        "send_brand_bot_message",
+        fake_send_brand_bot_message,
+    )
+
+    await reminders.send_winback_prompts(FakeBot(), settings)
+
+    assert delivered == [5002]
+    async with session_factory() as session:
+        first = await session.get(User, user_ids[0])
+        second = await session.get(User, user_ids[1])
+        assert first is not None and first.winback_sent_at is None
+        assert second is not None and second.winback_sent_at is not None
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_confirm_reminder_shows_followup_keyboard() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)

@@ -47,6 +47,15 @@ class BookingPeriodStats:
     top_services: list[tuple[str, int]]
 
 
+@dataclass(frozen=True, slots=True)
+class WinbackCandidate:
+    """Detached client data needed by the win-back sender."""
+
+    user_id: int
+    tg_id: int
+    display_name: str
+
+
 class BookingRepository:
     """Repository for bookings."""
 
@@ -642,7 +651,7 @@ class BookingRepository:
         *,
         now_utc: datetime,
         winback_days: int,
-    ) -> list[User]:
+    ) -> list[WinbackCandidate]:
         """Return users eligible for a win-back message.
 
         Criteria: has at least one completed booking, last completed booking was
@@ -682,7 +691,11 @@ class BookingRepository:
         )
         active_client_ids = set(active_client_ids_result.scalars().all())
         return [
-            booking.client
+            WinbackCandidate(
+                user_id=booking.client.id,
+                tg_id=booking.client.tg_id,
+                display_name=booking.client.display_name,
+            )
             for client_id, booking in latest_by_client.items()
             if client_id not in active_client_ids
             and booking.client is not None
@@ -695,6 +708,14 @@ class BookingRepository:
             )
             <= cutoff
         ]
+
+    async def mark_winback_sent(self, *, user_id: int, sent_at: datetime) -> None:
+        """Persist a successful win-back delivery without relying on ORM state."""
+        await self.session.execute(
+            update(User)
+            .where(User.id == user_id, User.winback_sent_at.is_(None))
+            .values(winback_sent_at=sent_at)
+        )
 
     async def get_last_completed_slot_at(self, client_id: int) -> datetime | None:
         """Return the start time of the most recent completed booking for a client."""
