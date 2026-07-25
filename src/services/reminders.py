@@ -166,6 +166,7 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
             if reminder_24h_enabled
             else []
         )
+        due_24h_ids = [booking.id for booking in due_24h]
         address_text = await build_address_text(session) if due_24h else ""
         button_configs_24h = (
             await load_all_button_configs(settings_repository) if due_24h else None
@@ -176,7 +177,14 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
         local_today = datetime.now(ZoneInfo(tz_name)).date()
         should_refresh_morning_summary = False
 
-        for booking in due_24h:
+        for booking_id in due_24h_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.CONFIRMED
+                or booking.reminder_24h_sent_at is not None
+            ):
+                continue
             try:
                 await send_brand_bot_message(
                     chat_id=booking.client.tg_id,
@@ -222,10 +230,18 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
         # 2h reminders are a fresh pre-visit check and go out even if the client
         # already confirmed the visit at the 24h step.
         due_2h = await booking_repository.list_due_2h_reminders(now_utc=now_utc)
+        due_2h_ids = [booking.id for booking in due_2h]
         button_configs = (
             await load_all_button_configs(settings_repository) if due_2h else None
         )
-        for booking in due_2h:
+        for booking_id in due_2h_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.CONFIRMED
+                or booking.reminder_2h_sent_at is not None
+            ):
+                continue
             try:
                 await send_brand_bot_message(
                     bot=bot,
@@ -277,8 +293,15 @@ async def mark_completed(bot: Bot, settings: Settings) -> None:
         for booking in due_bookings:
             if booking_needs_manual_resolution(booking, now_utc=now_utc):
                 continue
-            booking.status = BookingStatus.COMPLETED
-            changed = True
+            if booking.slot_id is None:
+                continue
+            changed = (
+                await booking_repository.mark_completed_if_current(
+                    booking_id=booking.id,
+                    slot_id=booking.slot_id,
+                )
+                or changed
+            )
         if changed:
             await session.commit()
             await refresh_live_morning_summary_for_today(
@@ -316,8 +339,16 @@ async def send_postvisit(bot: Bot, settings: Settings) -> None:
             now_utc=now_utc,
             delay_hours=delay_hours,
         )
+        due_booking_ids = [booking.id for booking in due_bookings]
 
-        for booking in due_bookings:
+        for booking_id in due_booking_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.COMPLETED
+                or booking.postvisit_sent_at is not None
+            ):
+                continue
             try:
                 await send_brand_bot_message(
                     bot=bot,
@@ -411,11 +442,19 @@ async def send_repeat_prompt(bot: Bot, settings: Settings) -> None:
             now_utc=now_utc,
             repeat_weeks=repeat_weeks,
         )
+        due_booking_ids = [booking.id for booking in due_bookings]
         button_configs = (
             await load_all_button_configs(settings_repository) if due_bookings else None
         )
 
-        for booking in due_bookings:
+        for booking_id in due_booking_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.COMPLETED
+                or booking.repeat_prompt_sent_at is not None
+            ):
+                continue
             try:
                 await send_brand_bot_message(
                     bot=bot,
@@ -565,16 +604,25 @@ async def send_unconfirmed_alerts(bot: Bot, settings: Settings) -> None:
             now_utc=now_utc,
             alert_delay_minutes=alert_delay_minutes,
         )
+        due_24h_booking_ids = [booking.id for booking in due_24h_bookings]
         due_bookings = await booking_repository.list_due_2h_unconfirmed_alerts(
             now_utc=now_utc,
             alert_delay_minutes=alert_delay_minutes,
             alert_before_minutes=alert_before_minutes,
         )
+        due_booking_ids = [booking.id for booking in due_bookings]
         local_today = datetime.now(ZoneInfo(tz_name)).date()
         should_refresh_morning_summary = False
 
-        for booking in due_24h_bookings:
-            if booking.slot is None or booking.client is None:
+        for booking_id in due_24h_booking_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.CONFIRMED
+                or booking.reminder_24h_unconfirmed_alert_sent_at is not None
+                or booking.slot is None
+                or booking.client is None
+            ):
                 continue
             try:
                 local_dt = format_local_datetime(booking.slot.start_at, tz_name)
@@ -624,8 +672,15 @@ async def send_unconfirmed_alerts(bot: Bot, settings: Settings) -> None:
                 logger.exception("Failed to send 24h unconfirmed alert for booking %s", booking.id)
                 await session.rollback()
 
-        for booking in due_bookings:
-            if booking.slot is None or booking.client is None:
+        for booking_id in due_booking_ids:
+            booking = await booking_repository.get_by_id(booking_id)
+            if (
+                booking is None
+                or booking.status != BookingStatus.CONFIRMED
+                or booking.reminder_2h_unconfirmed_alert_sent_at is not None
+                or booking.slot is None
+                or booking.client is None
+            ):
                 continue
             try:
                 local_dt = format_local_datetime(booking.slot.start_at, tz_name)

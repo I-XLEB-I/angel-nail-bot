@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from secrets import randbelow
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,24 @@ class UserRepository:
         """Return a user by Telegram id."""
         result = await self.session.execute(select(User).where(User.tg_id == tg_id))
         return result.scalar_one_or_none()
+
+    async def create_guest(self, display_name: str) -> User:
+        """Create a distinct offline client with a non-Telegram identifier."""
+        normalized_name = display_name.strip()[:255] or "Гость"
+        for _attempt in range(5):
+            guest = User(
+                tg_id=-(randbelow(2**62 - 1) + 1),
+                display_name=normalized_name,
+                is_admin=False,
+            )
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(guest)
+                    await self.session.flush()
+            except IntegrityError:
+                continue
+            return guest
+        raise RuntimeError("Could not allocate a unique guest identifier")
 
     async def find_by_phone(
         self,
@@ -213,7 +233,9 @@ class UserRepository:
             .group_by(Booking.client_id)
         )
         active_client_ids = {int(user_id) for user_id in active_result.scalars().all()}
-        final_ids = [user_id for user_id in candidate_ids if user_id not in active_client_ids][:limit]
+        final_ids = [
+            user_id for user_id in candidate_ids if user_id not in active_client_ids
+        ][:limit]
         if not final_ids:
             return []
 

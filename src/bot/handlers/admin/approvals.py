@@ -45,8 +45,8 @@ from src.db.models import (
     ApprovalRequestStatus,
     Booking,
     Service,
+    Slot,
     User,
-    utcnow,
 )
 from src.db.repositories.approvals import ApprovalRequestRepository
 from src.db.repositories.settings import SettingRepository
@@ -63,6 +63,8 @@ from src.services.approvals import (
     build_admin_approval_card_text,
 )
 from src.services.booking import (
+    calculate_booking_duration,
+    filter_slots_without_booking_overlap,
     format_local_datetime,
     format_local_day_label,
     group_slots_by_local_day,
@@ -310,6 +312,38 @@ def _approval_time_prompt(local_day: date) -> str:
     )
 
 
+async def _filter_slots_for_approval(
+    db_session: AsyncSession,
+    *,
+    approval: ApprovalRequest,
+    slots: list[Slot],
+) -> list[Slot]:
+    """Remove starts that cannot fit the approval's appointment duration."""
+    if approval.kind == ApprovalRequestKind.REPAIR_REQUEST:
+        duration_min = await get_int_setting(
+            SettingRepository(db_session),
+            key="repair_default_duration_min",
+            default=30,
+        )
+    else:
+        base_service, addons = await admin_approvals_service.load_approval_service_context(
+            db_session,
+            approval,
+        )
+        if base_service is None:
+            return slots
+        duration_min = calculate_booking_duration(
+            base_service=base_service,
+            addons=addons,
+        )
+    return await filter_slots_without_booking_overlap(
+        db_session,
+        slots=slots,
+        duration_min=duration_min,
+        exclude_booking_id=approval.related_booking_id,
+    )
+
+
 async def _show_approval_day_picker(
     message: Message,
     *,
@@ -326,6 +360,11 @@ async def _show_approval_day_picker(
     """Render the shared day picker for admin approval confirm/offer flows."""
     slot_repository = SlotRepository(db_session)
     slots = await slot_repository.list_free_future()
+    slots = await _filter_slots_for_approval(
+        db_session,
+        approval=approval,
+        slots=slots,
+    )
     day_options = order_day_options_by_preference(
         group_slots_by_local_day(slots, settings.tz),
         approval.client.preferred_days_note if approval.client is not None else None,
@@ -442,6 +481,11 @@ async def _show_approval_time_picker(
     """Render the concrete time-picker after the admin chooses one day."""
     slot_repository = SlotRepository(db_session)
     slots = await slot_repository.list_free_for_local_day(local_day=local_day, tz_name=settings.tz)
+    slots = await _filter_slots_for_approval(
+        db_session,
+        approval=approval,
+        slots=slots,
+    )
     slots = order_slots_by_time_preference(
         slots,
         approval.client.preferred_time_note if approval.client is not None else None,
@@ -553,9 +597,9 @@ async def commit_decline_request(
     reason: str,
     db_session: AsyncSession,
     bot,
-) -> None:
+) -> bool:
     """Persist one standard decline and notify the client."""
-    await admin_approvals_service.commit_decline_request(
+    return await admin_approvals_service.commit_decline_request(
         approval=approval,
         reason=reason,
         db_session=db_session,
@@ -568,9 +612,9 @@ async def commit_repair_decline_request(
     approval: ApprovalRequest,
     db_session: AsyncSession,
     bot,
-) -> None:
+) -> bool:
     """Persist a repair decline and notify the client with the template copy."""
-    await admin_approvals_service.commit_repair_decline_request(
+    return await admin_approvals_service.commit_repair_decline_request(
         approval=approval,
         db_session=db_session,
         bot=bot,
@@ -1301,13 +1345,21 @@ async def offer_slot_to_client(
             )
         return
 
-    # Update approval to OFFERED, store the slot being offered.
-    approval.status = ApprovalRequestStatus.OFFERED
-    approval.offered_slot_id = slot.id
-    approval.offered_start_at = None
-    await db_session.commit()
+    offered = await admin_approvals_service.commit_approval_offer(
+        approval=approval,
+        db_session=db_session,
+        offered_slot_id=slot.id,
+        offered_start_at=None,
+    )
+    if not offered:
+        if callback.message is not None:
+            await _replace_approval_callback_notice(
+                callback,
+                texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            )
+        return
 
-    # Notify client.
+    offer_notice = texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT
     try:
         await callback.bot.send_message(
             chat_id=approval.client.tg_id,
@@ -1321,6 +1373,15 @@ async def offer_slot_to_client(
         )
     except Exception:
         logger.exception("Failed to send time-offer message to client %s", approval.client_id)
+        reverted = await admin_approvals_service.reset_approval_offer_to_pending(
+            approval=approval,
+            db_session=db_session,
+        )
+        offer_notice = (
+            texts.APPROVAL_TIME_OFFER_DELIVERY_FAILED_ADMIN_TEXT
+            if reverted
+            else texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        )
 
     # Acknowledge to admin.
     if callback.message is not None:
@@ -1332,12 +1393,12 @@ async def offer_slot_to_client(
                 settings=settings,
                 state=state,
                 edit=True,
-                notice_text=texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT,
+                notice_text=offer_notice,
             )
         else:
             await _replace_approval_callback_notice(
                 callback,
-                texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT,
+                offer_notice,
             )
 
 
@@ -1601,11 +1662,23 @@ async def submit_custom_repair_offer(
         )
         return
 
-    approval.status = ApprovalRequestStatus.OFFERED
-    approval.offered_slot_id = None
-    approval.offered_start_at = start_at
-    await db_session.commit()
+    offered = await admin_approvals_service.commit_approval_offer(
+        approval=approval,
+        db_session=db_session,
+        offered_slot_id=None,
+        offered_start_at=start_at,
+    )
+    if not offered:
+        await state.clear()
+        await upsert_inline_panel(
+            message.bot,
+            chat_id=panel_chat_id,
+            message_id=panel_message_id,
+            text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
 
+    offer_notice = texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT
     try:
         await message.bot.send_message(
             chat_id=approval.client.tg_id,
@@ -1619,6 +1692,15 @@ async def submit_custom_repair_offer(
         )
     except Exception:
         logger.exception("Failed to send custom repair offer %s", approval.id)
+        reverted = await admin_approvals_service.reset_approval_offer_to_pending(
+            approval=approval,
+            db_session=db_session,
+        )
+        offer_notice = (
+            texts.APPROVAL_TIME_OFFER_DELIVERY_FAILED_ADMIN_TEXT
+            if reverted
+            else texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        )
 
     await state.clear()
     pending_approvals = await repository.list_pending()
@@ -1626,7 +1708,7 @@ async def submit_custom_repair_offer(
         message.bot,
         chat_id=panel_chat_id,
         message_id=panel_message_id,
-        text=f"{texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT}\n\n{texts.ADMIN_APPROVALS_HEADER_TEXT}",
+        text=f"{offer_notice}\n\n{texts.ADMIN_APPROVALS_HEADER_TEXT}",
         reply_markup=(
             build_admin_approvals_list_keyboard(
                 [
@@ -1788,12 +1870,21 @@ async def decline_with_template_reason_commit(
         )
         return
 
-    await commit_decline_request(
+    declined = await commit_decline_request(
         approval=approval,
         reason=reason,
         db_session=db_session,
         bot=callback.bot,
     )
+    if not declined:
+        await _show_pending_approvals_or_notice(
+            callback,
+            db_session=db_session,
+            state=state,
+            settings=settings,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
     if callback.message is not None:
         if settings is not None and state is not None:
             await show_pending_approvals(
@@ -1856,12 +1947,23 @@ async def decline_with_custom_reason_commit(
         )
         return
 
-    await commit_decline_request(
+    declined = await commit_decline_request(
         approval=approval,
         reason=reason,
         db_session=db_session,
         bot=callback.bot,
     )
+    if not declined:
+        await show_pending_approvals(
+            callback.message,
+            db_session=db_session,
+            is_admin=True,
+            settings=settings,
+            state=state,
+            edit=True,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
     await clear_state_preserving_admin_panel(state, admin_as_client=False)
     await show_pending_approvals(
         callback.message,
@@ -1901,11 +2003,20 @@ async def decline_repair_request_commit(
         )
         return
 
-    await commit_repair_decline_request(
+    declined = await commit_repair_decline_request(
         approval=approval,
         db_session=db_session,
         bot=callback.bot,
     )
+    if not declined:
+        await _show_pending_approvals_or_notice(
+            callback,
+            db_session=db_session,
+            state=state,
+            settings=settings,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
     if callback.message is not None:
         if settings is not None and state is not None:
             await show_pending_approvals(
@@ -1987,13 +2098,24 @@ async def quietly_close_approval(
         )
         return
 
-    approval.status = ApprovalRequestStatus.RESPONDED
-    approval.resolved_at = utcnow()
     notice_text = (
         texts.ADMIN_APPROVAL_QUIET_CLOSE_TEXT if quiet_close else texts.ADMIN_APPROVAL_READ_TEXT
     )
-    approval.admin_response_text = "Тихо закрыто" if quiet_close else "Прочитано"
-    await db_session.commit()
+    resolved = await admin_approvals_service.commit_quiet_approval_resolution(
+        approval=approval,
+        db_session=db_session,
+        allowed_statuses=allowed_statuses,
+        response_text="Тихо закрыто" if quiet_close else "Прочитано",
+    )
+    if not resolved:
+        await _show_pending_approvals_or_notice(
+            callback,
+            db_session=db_session,
+            state=state,
+            settings=settings,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
     if callback.message is not None:
         if settings is not None and state is not None:
             await show_pending_approvals(

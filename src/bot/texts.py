@@ -255,6 +255,14 @@ BOOKING_CONFIRM_SLOT_TAKEN_TEXT = """😔 Это окошко только чт�
 
 Не страшно, ниже свободные часы на этот же день 🤍"""
 BOOKING_CONFIRM_SLOT_TAKEN_FOLLOWUP_TEXT = "Вот что осталось на этот день 👇"
+BOOKING_SERVICE_UNAVAILABLE_TEXT = (
+    "Прайс успел обновиться, и выбранная услуга больше недоступна. "
+    "Показываю актуальные варианты 🤍"
+)
+BOOKING_PRICE_CHANGED_TEXT = (
+    "Прайс успел измениться, поэтому я обновила итог. "
+    "Проверь сумму ещё раз перед подтверждением 🤍"
+)
 BOOKING_CANCELLED_TEXT = "Хорошо, запись не оформляю 🤍"
 BOOKING_STALE_DATA_TEXT = """Не получилось собрать запись: данные уже изменились.
 
@@ -634,6 +642,9 @@ ADMIN_SCHEDULE_ADDED_WITH_SKIPS_TEXT = (
 ADMIN_SCHEDULE_ALL_DUPLICATES_TEXT = "Всё уже добавлено 🤍"
 ADMIN_SCHEDULE_WEEK_EMPTY_TEXT = "На ближайшую неделю окошек пока нет 🤍"
 ADMIN_SCHEDULE_BOOKED_DELETE_FORBIDDEN_TEXT = "Нельзя удалить слот с активной записью 🤍"
+ADMIN_SCHEDULE_REFERENCED_MUTATION_FORBIDDEN_TEXT = (
+    "Окошко связано с историей записи, поэтому его нельзя удалить или перенести 🤍"
+)
 ADMIN_SCHEDULE_SLOT_DELETED_TEXT = "Окошко удалено ✨"
 ADMIN_SCHEDULE_DELETE_PERIOD_CONFIRM_TEXT = """🗑 УДАЛИТЬ ОКОШКИ ЗА ПЕРИОД?
 
@@ -750,6 +761,10 @@ APPROVAL_TIME_OFFER_CLIENT_TEXT = (
     "Тебе подходит? 🌸"
 )
 APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT = "Предложила клиентке время — ждём подтверждения 🌸"
+APPROVAL_TIME_OFFER_DELIVERY_FAILED_ADMIN_TEXT = (
+    "Не удалось доставить предложение клиентке. "
+    "Запрос вернула в очередь — можно повторить позже или написать ей напрямую 🤍"
+)
 APPROVAL_OFFER_ACCEPTED_ADMIN_TEXT = "✅ Клиентка подтвердила время {date} {time}"
 APPROVAL_OFFER_DECLINED_ADMIN_TEXT = "❌ Клиентка хочет другое время — запрос снова в очереди"
 APPROVAL_OFFER_EXPIRED_TEXT = "Похоже, это предложение уже успело измениться 🤍"

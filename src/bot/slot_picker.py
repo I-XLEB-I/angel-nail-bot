@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from datetime import date
-from typing import Callable
 
-from aiogram.types import BufferedInputFile, Message
 from aiogram.fsm.context import FSMContext
+from aiogram.types import BufferedInputFile, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.ui_utils import replace_inline_message_panel, replace_inline_message_text

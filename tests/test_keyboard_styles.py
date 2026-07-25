@@ -205,6 +205,28 @@ def test_booking_card_marks_cancellation_as_danger() -> None:
     assert keyboard.inline_keyboard[0][1].callback_data == "my_bookings:cancel:42"
 
 
+def test_booking_card_reuses_destructive_action_config() -> None:
+    keyboard = build_booking_card_keyboard(
+        42,
+        can_reschedule=False,
+        can_cancel=True,
+        cancel_label="❌ Отменить",
+        button_configs={
+            "common.cancel_action": ClientMenuButtonConfig(
+                text="🛑 Снять запись",
+                style_name="danger",
+                icon_custom_emoji_id="888999",
+            )
+        },
+    )
+
+    cancel_button = keyboard.inline_keyboard[0][0]
+    assert cancel_button.text == "Снять запись"
+    assert cancel_button.style == ButtonStyle.DANGER
+    assert cancel_button.icon_custom_emoji_id == "888999"
+    assert cancel_button.callback_data == "my_bookings:cancel:42"
+
+
 def test_booking_card_marks_reschedule_as_primary() -> None:
     keyboard = build_booking_card_keyboard(
         42,

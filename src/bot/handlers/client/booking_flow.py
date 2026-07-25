@@ -53,7 +53,14 @@ from src.bot.ui_utils import (
     safe_delete_message,
 )
 from src.config import Settings
-from src.db.models import ApprovalRequestKind, ServiceKind, User, utcnow
+from src.db.models import (
+    ApprovalRequestKind,
+    BookingStatus,
+    ServiceKind,
+    Slot,
+    User,
+    utcnow,
+)
 from src.db.repositories.approvals import ApprovalRequestRepository
 from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.rate_limit_events import RateLimitEventRepository
@@ -76,6 +83,9 @@ from src.services.booking import (
     build_admin_booking_text,
     build_booking_summary_text,
     build_reference_progress_text,
+    build_service_pricing_signature,
+    current_booking_duration_minutes,
+    filter_slots_without_booking_overlap,
     format_local_datetime,
     group_slots_by_local_day,
     needs_onboarding,
@@ -352,12 +362,45 @@ async def load_runtime_contact_url(
     return await load_master_contact_url(SettingRepository(db_session))
 
 
+async def filter_slots_for_current_booking_selection(
+    db_session: AsyncSession,
+    *,
+    state_data: dict,
+    slots: list[Slot],
+) -> tuple[list[Slot], bool]:
+    """Filter interval conflicts once the client has chosen a service."""
+    base_service_id = state_data.get("base_service_id")
+    if not isinstance(base_service_id, int):
+        return slots, True
+    addon_ids = [
+        int(addon_id)
+        for addon_id in list(state_data.get("selected_addons", []))
+        if isinstance(addon_id, int)
+    ]
+    duration_min = await current_booking_duration_minutes(
+        db_session,
+        base_service_id=base_service_id,
+        addon_ids=addon_ids,
+    )
+    if duration_min is None:
+        return [], False
+    return (
+        await filter_slots_without_booking_overlap(
+            db_session,
+            slots=slots,
+            duration_min=duration_min,
+        ),
+        True,
+    )
+
+
 async def show_base_service_step(
     message: Message,
     *,
     db_session: AsyncSession,
     state: FSMContext,
     replace: bool = False,
+    prefix_text: str | None = None,
 ) -> None:
     """Show the base-service selection step."""
     repository = ServiceRepository(db_session)
@@ -390,6 +433,7 @@ async def show_base_service_step(
         design_photos=current_data.get("design_photos", []),
         design_comment=current_data.get("design_comment"),
         reference_comment_requested=False,
+        confirm_pricing_signature=None,
     )
     defaults = required_template_defaults()
     template_repository = TemplateRepository(db_session)
@@ -397,10 +441,13 @@ async def show_base_service_step(
         "price",
         defaults["price"],
     )
+    caption = price_text.strip() or defaults["price"]
+    if prefix_text:
+        caption = f"{prefix_text}\n\n{caption}"
     await send_template_message(
         message,
         template_key="price",
-        caption=price_text.strip() or defaults["price"],
+        caption=caption,
         reply_markup=build_base_services_keyboard(
             base_services,
             button_configs=button_configs,
@@ -511,6 +558,20 @@ async def show_day_step(
     repository = SlotRepository(db_session)
     slots = await repository.list_free_future(horizon_days=PUBLIC_BOOKING_HORIZON_DAYS)
     state_data = await state.get_data()
+    slots, service_selection_available = await filter_slots_for_current_booking_selection(
+        db_session,
+        state_data=state_data,
+        slots=slots,
+    )
+    if not service_selection_available:
+        await show_base_service_step(
+            message,
+            db_session=db_session,
+            state=state,
+            replace=replace,
+            prefix_text=texts.BOOKING_SERVICE_UNAVAILABLE_TEXT,
+        )
+        return
     day_options = order_day_options_by_preference(
         group_slots_by_local_day(slots, settings.tz),
         state_data.get("preferred_days_note"),
@@ -579,6 +640,20 @@ async def show_time_step(
     button_configs = await load_runtime_button_configs(db_session)
     slots = await repository.list_free_for_local_day(local_day=local_day, tz_name=settings.tz)
     state_data = await state.get_data()
+    slots, service_selection_available = await filter_slots_for_current_booking_selection(
+        db_session,
+        state_data=state_data,
+        slots=slots,
+    )
+    if not service_selection_available:
+        await show_base_service_step(
+            message,
+            db_session=db_session,
+            state=state,
+            replace=replace,
+            prefix_text=texts.BOOKING_SERVICE_UNAVAILABLE_TEXT,
+        )
+        return
     slots = order_slots_by_time_preference(
         slots,
         state_data.get("preferred_time_note"),
@@ -921,6 +996,7 @@ async def show_confirm_step(
     settings: Settings,
     user: User,
     replace: bool = False,
+    prefix_text: str | None = None,
 ) -> None:
     """Show the final booking confirmation step."""
     if not user.phone:
@@ -936,8 +1012,28 @@ async def show_confirm_step(
 
     base_service = await repository.get_by_id(int(data["base_service_id"]))
     slot = await slot_repository.get_by_id(int(data["slot_id"]))
-    addons = await repository.list_by_ids(list(data.get("selected_addons", [])))
-    if base_service is None or slot is None:
+    selected_addon_ids = list(dict.fromkeys(data.get("selected_addons", [])))
+    addons = await repository.list_by_ids(selected_addon_ids)
+    service_selection_unavailable = (
+        base_service is None
+        or base_service.kind != ServiceKind.BASE
+        or not base_service.is_active
+        or len(addons) != len(selected_addon_ids)
+        or any(
+            addon.kind != ServiceKind.ADDON or not addon.is_active
+            for addon in addons
+        )
+    )
+    if service_selection_unavailable:
+        await show_base_service_step(
+            message,
+            db_session=db_session,
+            state=state,
+            replace=replace,
+            prefix_text=texts.BOOKING_SERVICE_UNAVAILABLE_TEXT,
+        )
+        return
+    if slot is None:
         await clear_state_preserving_admin_mode(state)
         if replace:
             await replace_inline_message_text(
@@ -953,7 +1049,13 @@ async def show_confirm_step(
         return
 
     await state.set_state(BookingStates.confirm)
-    await state.update_data(confirm_return_target=resolve_confirm_return_target(data))
+    await state.update_data(
+        confirm_return_target=resolve_confirm_return_target(data),
+        confirm_pricing_signature=build_service_pricing_signature(
+            base_service=base_service,
+            addons=addons,
+        ),
+    )
     summary_text = build_booking_summary_text(
         base_service=base_service,
         addons=addons,
@@ -963,6 +1065,8 @@ async def show_confirm_step(
         design_comment=data.get("design_comment"),
         payment_method=data.get("payment_method"),
     )
+    if prefix_text:
+        summary_text = f"{prefix_text}\n\n{summary_text}"
     if replace:
         await replace_inline_message_text(
             message,
@@ -2315,6 +2419,18 @@ async def finalize_booking(
 
     data = await state.get_data()
     button_configs = await load_runtime_button_configs(db_session)
+    expected_pricing_signature = data.get("confirm_pricing_signature")
+    if not isinstance(expected_pricing_signature, str):
+        await show_confirm_step(
+            callback.message,
+            db_session=db_session,
+            state=state,
+            settings=settings,
+            user=user,
+            replace=True,
+            prefix_text=texts.BOOKING_PRICE_CHANGED_TEXT,
+        )
+        return
     finalize_result = await finalize_direct_booking_attempt(
         db_session,
         slot_id=int(data["slot_id"]),
@@ -2325,6 +2441,7 @@ async def finalize_booking(
         design_comment=data.get("design_comment"),
         payment_method=data.get("payment_method"),
         settings=settings,
+        expected_pricing_signature=expected_pricing_signature,
     )
     attempt = finalize_result.attempt
     if attempt.outcome == "blocked":
@@ -2427,6 +2544,28 @@ async def finalize_booking(
         await clear_state_preserving_admin_mode(state)
         return
 
+    if attempt.outcome == "service_unavailable":
+        await show_base_service_step(
+            callback.message,
+            db_session=db_session,
+            state=state,
+            replace=True,
+            prefix_text=texts.BOOKING_SERVICE_UNAVAILABLE_TEXT,
+        )
+        return
+
+    if attempt.outcome == "price_changed":
+        await show_confirm_step(
+            callback.message,
+            db_session=db_session,
+            state=state,
+            settings=settings,
+            user=user,
+            replace=True,
+            prefix_text=texts.BOOKING_PRICE_CHANGED_TEXT,
+        )
+        return
+
     if attempt.approval is not None:
         user.repeat_prompt_snoozed_until = None
         await db_session.commit()
@@ -2458,6 +2597,26 @@ async def finalize_booking(
         return
 
     if not result.ok:
+        if result.reason == "service_unavailable":
+            await show_base_service_step(
+                callback.message,
+                db_session=db_session,
+                state=state,
+                replace=True,
+                prefix_text=texts.BOOKING_SERVICE_UNAVAILABLE_TEXT,
+            )
+            return
+        if result.reason == "price_changed":
+            await show_confirm_step(
+                callback.message,
+                db_session=db_session,
+                state=state,
+                settings=settings,
+                user=user,
+                replace=True,
+                prefix_text=texts.BOOKING_PRICE_CHANGED_TEXT,
+            )
+            return
         selected_day_value = data.get("selected_day")
         if selected_day_value:
             await show_time_step(
@@ -2572,12 +2731,30 @@ async def _show_post_reference_progress(
 async def post_reference_start(
     callback: CallbackQuery,
     state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    user: User,
 ) -> None:
     """Enter the post-booking reference upload mode."""
     await callback.answer()
     if callback.message is None or callback.data is None:
         return
     booking_id = int(callback.data.rsplit(":", 1)[-1])
+    booking = await BookingRepository(db_session).get_client_booking(
+        booking_id,
+        user.id,
+    )
+    if booking is None or booking.status != BookingStatus.CONFIRMED:
+        button_configs = await load_runtime_button_configs(db_session)
+        await replace_inline_message_text(
+            callback.message,
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            reply_markup=build_back_to_menu_keyboard(
+                button_configs=button_configs,
+            ),
+        )
+        return
+
     await state.set_state(PostBookingReference.upload)
     await state.update_data(
         post_booking_id=booking_id,
@@ -2727,10 +2904,24 @@ async def post_reference_done(
     booking_id = int(data.get("post_booking_id", 0))
     photos = list(data.get("design_photos", []))
     comment = data.get("design_comment")
+    updated = False
     if booking_id:
-        await BookingRepository(db_session).attach_design_photos(
+        updated = await BookingRepository(db_session).attach_design_photos(
             booking_id, user.id, photos, comment
         )
+    if not updated:
+        await clear_state_preserving_admin_mode(state)
+        button_configs = await load_runtime_button_configs(db_session)
+        await replace_inline_message_text(
+            callback.message,
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            reply_markup=build_back_to_menu_keyboard(
+                button_configs=button_configs,
+            ),
+        )
+        return
+
+    if booking_id:
         await db_session.commit()
     await clear_state_preserving_admin_mode(state)
     button_configs = await load_runtime_button_configs(db_session)

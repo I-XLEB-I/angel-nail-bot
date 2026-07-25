@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import delete, exists, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import Slot, SlotStatus
+from src.db.models import Booking, BookingStatus, Slot, SlotStatus
 from src.db.repositories.slots import SlotRepository
 from src.services.schedule_parser import ParsedSlot, parse_schedule
 
@@ -55,6 +57,23 @@ async def get_schedule_delete_period_payload(
         now_local + timedelta(days=days - 1),
     )
     deletable_slots = [slot for slot in slots if slot.status != SlotStatus.BOOKED]
+    if deletable_slots:
+        referenced_slot_ids = set(
+            (
+                await db_session.execute(
+                    select(Booking.slot_id)
+                    .where(
+                        Booking.slot_id.in_([slot.id for slot in deletable_slots])
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        deletable_slots = [
+            slot for slot in deletable_slots if slot.id not in referenced_slot_ids
+        ]
     return deletable_slots, period_label
 
 
@@ -65,17 +84,29 @@ async def delete_schedule_period(
     period_kind: str,
 ) -> SchedulePeriodDeleteResult:
     """Delete every free/blocked slot in the selected schedule period."""
-    repository = SlotRepository(db_session)
     deletable_slots, period_label = await get_schedule_delete_period_payload(
         db_session,
         tz_name=tz_name,
         period_kind=period_kind,
     )
-    for slot in deletable_slots:
-        await repository.delete_slot(slot)
+    slot_ids = [slot.id for slot in deletable_slots]
+    deleted_count = 0
+    if slot_ids:
+        deletion = await db_session.execute(
+            delete(Slot)
+            .where(
+                Slot.id.in_(slot_ids),
+                Slot.status != SlotStatus.BOOKED,
+                ~exists(
+                    select(Booking.id).where(Booking.slot_id == Slot.id)
+                ),
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+        deleted_count = int(deletion.rowcount or 0)
     await db_session.commit()
     return SchedulePeriodDeleteResult(
-        deleted_count=len(deletable_slots),
+        deleted_count=deleted_count,
         period_label=period_label,
     )
 
@@ -105,7 +136,53 @@ async def move_schedule_slot(
     if existing_slot is not None and existing_slot.id != slot.id:
         return ScheduleSlotMutationResult(ok=False, reason="collision", slot=slot)
 
-    await repository.update_start_at(slot, new_start_at)
+    try:
+        transition = await db_session.execute(
+            update(Slot)
+            .where(
+                Slot.id == slot.id,
+                Slot.status.in_([SlotStatus.FREE, SlotStatus.BLOCKED]),
+                ~exists(
+                    select(Booking.id).where(
+                        Booking.slot_id == slot.id,
+                    )
+                ),
+            )
+            .values(start_at=new_start_at)
+            .execution_options(synchronize_session=False)
+        )
+    except IntegrityError:
+        await db_session.rollback()
+        return ScheduleSlotMutationResult(ok=False, reason="collision")
+    if transition.rowcount != 1:
+        current_status = await db_session.scalar(
+            select(Slot.status).where(Slot.id == slot.id)
+        )
+        if current_status is None:
+            return ScheduleSlotMutationResult(ok=False, reason="missing")
+        has_active_booking = bool(
+            await db_session.scalar(
+                select(
+                    exists().where(
+                        Booking.slot_id == slot.id,
+                        Booking.status.in_(
+                            [
+                                BookingStatus.PENDING_MASTER,
+                                BookingStatus.CONFIRMED,
+                            ]
+                        ),
+                    )
+                )
+            )
+        )
+        reason = (
+            "booked"
+            if current_status == SlotStatus.BOOKED or has_active_booking
+            else "referenced"
+        )
+        return ScheduleSlotMutationResult(ok=False, reason=reason, slot=slot)
+
+    slot.start_at = new_start_at
     await db_session.commit()
     return ScheduleSlotMutationResult(ok=True, slot=slot)
 
@@ -120,10 +197,28 @@ async def delete_schedule_slot(
     slot = await repository.get_by_id(slot_id)
     if slot is None:
         return ScheduleSlotMutationResult(ok=False, reason="missing")
-    if slot.status == SlotStatus.BOOKED:
-        return ScheduleSlotMutationResult(ok=False, reason="booked", slot=slot)
+    try:
+        deletion = await db_session.execute(
+            delete(Slot)
+            .where(
+                Slot.id == slot.id,
+                Slot.status != SlotStatus.BOOKED,
+                ~exists(select(Booking.id).where(Booking.slot_id == slot.id)),
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+    except IntegrityError:
+        await db_session.rollback()
+        return ScheduleSlotMutationResult(ok=False, reason="referenced", slot=slot)
+    if deletion.rowcount != 1:
+        current_status = await db_session.scalar(
+            select(Slot.status).where(Slot.id == slot.id)
+        )
+        if current_status is None:
+            return ScheduleSlotMutationResult(ok=False, reason="missing")
+        reason = "booked" if current_status == SlotStatus.BOOKED else "referenced"
+        return ScheduleSlotMutationResult(ok=False, reason=reason, slot=slot)
 
-    await repository.delete_slot(slot)
     await db_session.commit()
     return ScheduleSlotMutationResult(ok=True)
 
@@ -138,10 +233,30 @@ async def block_schedule_slot(
     slot = await repository.get_by_id(slot_id)
     if slot is None:
         return ScheduleSlotMutationResult(ok=False, reason="missing")
-    if slot.status == SlotStatus.BOOKED:
+    transition = await db_session.execute(
+        update(Slot)
+        .where(
+            Slot.id == slot.id,
+            Slot.status.in_([SlotStatus.FREE, SlotStatus.BLOCKED]),
+            ~exists(
+                select(Booking.id).where(
+                    Booking.slot_id == slot.id,
+                    Booking.status.in_(
+                        [
+                            BookingStatus.PENDING_MASTER,
+                            BookingStatus.CONFIRMED,
+                        ]
+                    ),
+                )
+            ),
+        )
+        .values(status=SlotStatus.BLOCKED)
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
         return ScheduleSlotMutationResult(ok=False, reason="booked", slot=slot)
 
-    await repository.update_status(slot, SlotStatus.BLOCKED)
+    slot.status = SlotStatus.BLOCKED
     await db_session.commit()
     return ScheduleSlotMutationResult(ok=True, slot=slot)
 
@@ -157,6 +272,29 @@ async def unblock_schedule_slot(
     if slot is None:
         return ScheduleSlotMutationResult(ok=False, reason="missing")
 
-    await repository.update_status(slot, SlotStatus.FREE)
+    transition = await db_session.execute(
+        update(Slot)
+        .where(
+            Slot.id == slot.id,
+            Slot.status.in_([SlotStatus.FREE, SlotStatus.BLOCKED]),
+            ~exists(
+                select(Booking.id).where(
+                    Booking.slot_id == slot.id,
+                    Booking.status.in_(
+                        [
+                            BookingStatus.PENDING_MASTER,
+                            BookingStatus.CONFIRMED,
+                        ]
+                    ),
+                )
+            ),
+        )
+        .values(status=SlotStatus.FREE)
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return ScheduleSlotMutationResult(ok=False, reason="booked", slot=slot)
+
+    slot.status = SlotStatus.FREE
     await db_session.commit()
     return ScheduleSlotMutationResult(ok=True, slot=slot)

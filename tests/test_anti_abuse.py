@@ -36,6 +36,7 @@ from src.services.anti_abuse import (
     attempt_booking_with_anti_abuse,
     attempt_reschedule_with_anti_abuse,
 )
+from src.services.booking import build_service_pricing_signature
 
 
 class FakeState:
@@ -148,6 +149,145 @@ async def create_base_entities(session):
     session.add_all([user, service])
     await session.flush()
     return user, service
+
+
+@pytest.mark.asyncio
+async def test_inactive_service_cannot_create_manual_approval() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(
+            tg_id=1000,
+            display_name="Клиентка",
+            requires_manual_approval=True,
+        )
+        service = Service(
+            name="Отключённая услуга",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=False,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.FREE,
+        )
+        session.add_all([user, service, slot])
+        await session.commit()
+
+        result = await attempt_booking_with_anti_abuse(
+            session,
+            user=user,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+            tz_name="Europe/Moscow",
+        )
+
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        assert result.outcome == "service_unavailable"
+        assert approval_count == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_changed_price_cannot_create_manual_approval_from_stale_summary() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(
+            tg_id=1002,
+            display_name="Клиентка",
+            requires_manual_approval=True,
+        )
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.FREE,
+        )
+        session.add_all([user, service, slot])
+        await session.flush()
+        shown_signature = build_service_pricing_signature(
+            base_service=service,
+            addons=[],
+        )
+        service.price = 2600
+        await session.commit()
+
+        result = await attempt_booking_with_anti_abuse(
+            session,
+            user=user,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+            tz_name="Europe/Moscow",
+            expected_pricing_signature=shown_signature,
+        )
+
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        assert result.outcome == "price_changed"
+        assert result.approval is None
+        assert approval_count == 0
+        assert slot.status == SlotStatus.FREE
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_past_slot_cannot_create_manual_approval() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user, service = await create_base_entities(session)
+        user.requires_manual_approval = True
+        slot = Slot(
+            start_at=datetime.now(UTC) - timedelta(minutes=1),
+            status=SlotStatus.FREE,
+        )
+        session.add(slot)
+        await session.commit()
+
+        result = await attempt_booking_with_anti_abuse(
+            session,
+            user=user,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+            tz_name="Europe/Moscow",
+        )
+
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        assert result.outcome == "slot_unavailable"
+        assert result.approval is None
+        assert approval_count == 0
+
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -435,6 +575,51 @@ async def test_booking_outside_window_confirms_directly() -> None:
 
 
 @pytest.mark.asyncio
+async def test_past_slot_cannot_create_late_reschedule_approval() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user, service = await create_base_entities(session)
+        now = datetime.now(UTC)
+        old_slot = Slot(start_at=now + timedelta(days=5), status=SlotStatus.BOOKED)
+        past_slot = Slot(start_at=now - timedelta(minutes=1), status=SlotStatus.FREE)
+        session.add_all([old_slot, past_slot])
+        await session.flush()
+        booking = Booking(
+            client_id=user.id,
+            slot_id=old_slot.id,
+            base_service_id=service.id,
+            addons=[],
+            design_photos=[],
+            fixed_price=2400,
+            has_variable_price=False,
+            status=BookingStatus.CONFIRMED,
+        )
+        session.add(booking)
+        await session.commit()
+
+        result = await attempt_reschedule_with_anti_abuse(
+            session,
+            user=user,
+            booking=booking,
+            new_slot_id=past_slot.id,
+            tz_name="Europe/Moscow",
+        )
+
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        assert result.outcome == "slot_unavailable"
+        assert result.approval is None
+        assert approval_count == 0
+        assert booking.slot_id == old_slot.id
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_late_reschedule_creates_approval_request() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -697,7 +882,11 @@ async def test_choose_reschedule_slot_does_not_resend_existing_pending_approval(
             "attempt_reschedule_with_anti_abuse",
             fake_attempt_reschedule_with_anti_abuse,
         )
-        monkeypatch.setattr(approvals_handler, "send_approval_card_to_admins", fake_send_approval_card_to_admins)
+        monkeypatch.setattr(
+            approvals_handler,
+            "send_approval_card_to_admins",
+            fake_send_approval_card_to_admins,
+        )
         monkeypatch.setattr(
             my_bookings_handler,
             "show_booking_card_message",
@@ -1303,6 +1492,10 @@ async def test_shadow_banned_user_booking_is_silent_noop(monkeypatch) -> None:
             selected_addons=[],
             design_photos=[],
             design_comment=None,
+            confirm_pricing_signature=build_service_pricing_signature(
+                base_service=service,
+                addons=[],
+            ),
         )
         callback = FakeCallback("booking:confirm")
 

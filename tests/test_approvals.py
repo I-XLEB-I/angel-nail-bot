@@ -13,6 +13,7 @@ from src.db.models import (
 )
 from src.services.approvals import (
     build_admin_approval_card_text,
+    build_client_approval_confirmed_text,
     extract_requested_slot_start_at,
 )
 
@@ -99,3 +100,16 @@ def test_build_admin_approval_card_text_includes_context() -> None:
     assert "Услуга: Маникюр + Дизайн" in rendered
     assert "Референсы: 1 фото" in rendered
     assert "Создано: 20 мин назад" in rendered
+
+
+def test_client_approval_confirmation_heading_uses_sentence_case() -> None:
+    rendered = build_client_approval_confirmed_text(
+        start_at=datetime(2026, 4, 22, 10, 30, tzinfo=UTC),
+        base_service_name="Маникюр",
+        tz_name="Europe/Moscow",
+        address_text="ул. Примерная, 1",
+        payment_method="cash",
+    )
+
+    assert "<b>✅ Запись подтверждена</b>" in rendered
+    assert "ЗАПИСЬ ПОДТВЕРЖДЕНА" not in rendered

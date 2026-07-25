@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Slot, SlotStatus
@@ -32,9 +33,16 @@ class SlotRepository:
         if slot is not None:
             return slot, False
 
-        slot = Slot(start_at=start_at, status=SlotStatus.FREE)
-        self.session.add(slot)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                slot = Slot(start_at=start_at, status=SlotStatus.FREE)
+                self.session.add(slot)
+                await self.session.flush()
+        except IntegrityError:
+            slot = await self.get_by_start_at(start_at)
+            if slot is None:
+                raise
+            return slot, False
         return slot, True
 
     async def list_free_future(

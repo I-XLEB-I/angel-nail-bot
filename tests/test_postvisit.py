@@ -169,6 +169,47 @@ async def test_low_rating_creates_approval_immediately(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_postvisit_rating_rejects_another_clients_booking() -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        _owner, booking = await seed_completed_booking(session)
+        outsider = User(
+            tg_id=1002,
+            display_name="Другая клиентка",
+            is_admin=False,
+            is_blocked=False,
+        )
+        session.add(outsider)
+        await session.commit()
+
+        state = FakeState()
+        callback = FakeCallback(f"postvisit:rate:{booking.id}:1")
+        await postvisit_handler.rate_postvisit(
+            callback,
+            state,
+            db_session=session,
+            user=outsider,
+            settings=settings,
+        )
+
+        approval_count = await session.scalar(select(func.count(ApprovalRequest.id)))
+        assert approval_count == 0
+        assert callback.message.edits
+        assert (
+            callback.message.edits[-1][0]
+            == postvisit_handler.texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        )
+        assert state.state is None
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_mid_rating_comment_reuses_existing_approval(monkeypatch) -> None:
     forwarded_messages: list[str] = []
 

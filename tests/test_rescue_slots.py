@@ -197,7 +197,14 @@ async def test_admin_rescue_offer_sends_only_to_loyal_available_clients(monkeypa
 
         sent_chat_ids: list[int] = []
 
-        async def fake_send_brand_bot_message(bot, *, chat_id, caption, reply_markup=None, **kwargs):
+        async def fake_send_brand_bot_message(
+            bot,
+            *,
+            chat_id,
+            caption,
+            reply_markup=None,
+            **kwargs,
+        ):
             del bot, caption, reply_markup, kwargs
             sent_chat_ids.append(chat_id)
 
@@ -279,7 +286,11 @@ async def test_claim_rescue_offer_starts_booking_with_locked_slot(monkeypatch) -
                 }
             )
 
-        monkeypatch.setattr(booking_flow_handler, "send_template_message", fake_send_template_message)
+        monkeypatch.setattr(
+            booking_flow_handler,
+            "send_template_message",
+            fake_send_template_message,
+        )
 
         callback = FakeCallback(f"rescue_offer:claim:{slot.id}")
         state = FakeState()

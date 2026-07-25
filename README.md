@@ -162,7 +162,8 @@ FEATURE_REMINDER_2H=true
 
 ## Docker
 
-Подробная инструкция по серверному деплою и обновлениям вынесена в [docs/server_deploy.md](/Users/mark/Angel-nail-bot/docs/server_deploy.md).
+Production автоматически разворачивается Railway из подключённой ветки GitHub.
+Актуальная инструкция: [docs/railway_deploy.md](docs/railway_deploy.md).
 
 Локальный запуск:
 
@@ -181,78 +182,18 @@ docker compose up --build
 
 `seed.py` рассчитан в первую очередь на первый запуск пустой БД. На проде его не стоит гонять на каждом обновлении: он обновляет стартовые услуги, шаблоны и runtime-настройки в базе.
 
-Продовый compose без bind-mount:
+Для Railway обязательно:
 
-```bash
-docker compose -f docker-compose.prod.yml up --build -d
-```
+- подключить persistent volume к `/app/data`;
+- задать `DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db`;
+- хранить токены и Google credentials только в Railway Variables;
+- держать один экземпляр сервиса из-за long polling и встроенного scheduler;
+- включить резервные копии volume.
 
-В `docker-compose.prod.yml` монтируются только:
-
-- `./data:/app/data`
-- `./secrets:/app/secrets:ro`
-
-Это безопаснее для сервера, чем dev-режим с `.:/app`.
-
-Бот работает через long polling, а не webhook, поэтому для прод-запуска не нужны домен, Nginx и открытые `80/443`. Достаточно, чтобы сервер имел исходящий доступ в интернет и вы могли зайти на него по SSH.
-
-### Важно: что нельзя затирать при деплое
-
-Продовые runtime-данные живут в `data/bot.db`. Если при деплое перезаписать папку `data/` локальной копией, можно откатить изменения, сделанные через админку на сервере.
-
-В `data/bot.db` хранятся, в частности:
-
-- runtime-настройки из админки, например `schedule_image_enabled`
-- тексты, шаблоны и часть UI-настроек
-- конфиги кнопок, включая премиум-эмодзи, иконки, подписи и стили
-- клиентские и сервисные данные, которые уже появились на проде
-
-Из-за этого обычный деплой **не должен** копировать на сервер:
-
-- `data/`
-- `secrets/`
-- `.env`
-
-Безопасная команда деплоя с Mac на сервер:
-
-```bash
-rsync -av \
-  --exclude '.venv' \
-  --exclude '__pycache__' \
-  --exclude '.pytest_cache' \
-  --exclude 'data' \
-  --exclude 'secrets' \
-  --exclude '.env' \
-  /Users/mark/Angel-nail-bot/ \
-  root@<SERVER_IP>:/opt/angel-nail-bot/
-```
-
-После этого на сервере:
-
-```bash
-cd /opt/angel-nail-bot
-docker compose -f docker-compose.prod.yml up --build -d
-docker compose -f docker-compose.prod.yml logs -f bot
-```
-
-Если код не менялся, а нужно только перезапустить бота, `rsync` не нужен:
-
-```bash
-cd /opt/angel-nail-bot
-docker compose -f docker-compose.prod.yml restart bot
-docker compose -f docker-compose.prod.yml logs -f bot
-```
-
-### Важно: один инстанс
-
-Бот работает через `long polling` и поднимает свой scheduler внутри процесса. Поэтому в проде нужно держать один экземпляр сервиса `bot`, иначе можно получить конфликты polling и двойной запуск фоновых задач.
-
-Короткое правило:
-
-- менялся код → `rsync` без `data/secrets/.env` + `docker compose ... up --build -d`
-- код не менялся → `docker compose ... restart bot`
-
-Если внезапно пропали премиум-эмодзи, подписи кнопок или картинка расписания, первым делом проверь, не была ли перезаписана серверная `data/bot.db` во время деплоя.
+Railway использует корневой `Dockerfile`. При старте `entrypoint.sh` применяет миграции
+и заполняет seed-данные только на действительно новой базе. Код дополнительно
+проверяет, что SQLite находится внутри Railway volume, поэтому ошибочная конфигурация
+не сможет незаметно создать временную production-базу.
 
 ## Структура проекта
 

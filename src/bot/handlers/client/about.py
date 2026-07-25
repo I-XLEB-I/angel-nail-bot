@@ -4,8 +4,8 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import Settings
 from src.bot.handlers.client.portfolio import show_portfolio
+from src.config import Settings
 
 router = Router(name="client_about")
 

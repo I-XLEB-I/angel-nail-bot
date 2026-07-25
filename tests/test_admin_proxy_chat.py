@@ -374,3 +374,102 @@ async def test_submit_admin_decline_reason_requires_explicit_confirmation(monkey
         assert "Точно отказать клиентке" in str(captured["text"])
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_client_cannot_open_another_clients_proxy_thread() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        owner = User(tg_id=3001, display_name="Владелица", is_admin=False, is_blocked=False)
+        outsider = User(tg_id=3002, display_name="Другая", is_admin=False, is_blocked=False)
+        approval = ApprovalRequest(
+            client=owner,
+            kind=ApprovalRequestKind.QUESTION,
+            status=ApprovalRequestStatus.PENDING,
+            requested_text="Личный вопрос",
+        )
+        session.add_all([owner, outsider, approval])
+        await session.commit()
+
+        callback = FakeCallback(f"proxy:reply:{approval.id}")
+        state = FakeState()
+        await proxy_chat_handler.start_client_proxy_reply(
+            callback,
+            state,
+            db_session=session,
+            user=outsider,
+        )
+
+        assert callback.answered is True
+        assert state.cleared is True
+        assert state.state is None
+        assert "proxy_approval_id" not in state.data
+        assert callback.message.edits
+        assert (
+            callback.message.edits[-1][0]
+            == proxy_chat_handler.texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        )
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_client_cannot_submit_reply_to_another_clients_proxy_thread(
+    monkeypatch,
+) -> None:
+    forwarded: list[str] = []
+
+    async def fake_send_text_to_admins(*args, **kwargs) -> None:
+        del args, kwargs
+        forwarded.append("sent")
+
+    monkeypatch.setattr(
+        proxy_chat_handler,
+        "send_text_to_admins",
+        fake_send_text_to_admins,
+    )
+
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        owner = User(tg_id=3003, display_name="Владелица", is_admin=False, is_blocked=False)
+        outsider = User(tg_id=3004, display_name="Другая", is_admin=False, is_blocked=False)
+        approval = ApprovalRequest(
+            client=owner,
+            kind=ApprovalRequestKind.QUESTION,
+            status=ApprovalRequestStatus.PENDING,
+            requested_text="Личный вопрос",
+        )
+        session.add_all([owner, outsider, approval])
+        await session.commit()
+
+        message = FakeMessage("Чужой ответ")
+        state = FakeState()
+        await state.update_data(proxy_approval_id=approval.id)
+        await proxy_chat_handler.submit_client_proxy_reply(
+            message,
+            state,
+            db_session=session,
+            user=outsider,
+            settings=settings,
+        )
+
+        assert forwarded == []
+        assert state.cleared is True
+        assert message.answers
+        assert (
+            message.answers[-1][0]
+            == proxy_chat_handler.texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        )
+
+    await engine.dispose()

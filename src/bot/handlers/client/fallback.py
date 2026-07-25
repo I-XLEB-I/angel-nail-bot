@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bot import texts
 from src.bot.keyboards.client import build_client_fallback_keyboard
 from src.db.repositories.settings import SettingRepository
-from src.services.button_configs import ANGELA_CHAT_URL, load_all_button_configs, load_master_contact_url
+from src.services.button_configs import (
+    ANGELA_CHAT_URL,
+    load_all_button_configs,
+    load_master_contact_url,
+)
 
 router = Router(name="client_fallback")
 

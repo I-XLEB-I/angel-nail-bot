@@ -32,6 +32,8 @@ from src.db.repositories.users import UserRepository
 from src.services.booking import (
     ConfirmBookingResult,
     confirm_booking,
+    current_booking_duration_minutes,
+    filter_slots_without_booking_overlap,
     format_local_datetime,
     group_slots_by_local_day,
 )
@@ -191,7 +193,7 @@ async def manual_booking_client_search(
     user_repository = UserRepository(db_session)
     # Also try to match by phone
     users = await user_repository.search_clients(query, limit=8)
-    if not users and query.startswith("+") or any(ch.isdigit() for ch in query):
+    if not users and (query.startswith("+") or any(ch.isdigit() for ch in query)):
         by_phone = await user_repository.find_by_phone(query)
         if by_phone:
             users = [by_phone]
@@ -247,29 +249,11 @@ async def manual_booking_create_guest(
     data = await state.get_data()
     guest_name = (data.get("manual_booking_guest_name") or "Гость").strip()[:255] or "Гость"
 
-    # Create guest with a placeholder tg_id that won't match real users.
-    # We use a large negative-based stable ID collision-resistant number.
-    import hashlib  # noqa: PLC0415
-
-    fake_tg_id = -(abs(int(hashlib.md5(guest_name.encode()).hexdigest()[:8], 16)) % 10**9 + 1)
     user_repository = UserRepository(db_session)
-    existing = await user_repository.get_by_tg_id(fake_tg_id)
-    if existing is None:
-        from src.db.models import User as UserModel  # noqa: PLC0415
-
-        guest_user = UserModel(
-            tg_id=fake_tg_id,
-            display_name=guest_name,
-            is_admin=False,
-        )
-        db_session.add(guest_user)
-        await db_session.flush()
-        client_id = guest_user.id
-    else:
-        client_id = existing.id
+    guest_user = await user_repository.create_guest(guest_name)
 
     await state.update_data(
-        manual_booking_client_id=client_id,
+        manual_booking_client_id=guest_user.id,
         manual_booking_client_name=guest_name,
     )
     await _show_service_picker(callback.message, state, db_session=db_session)
@@ -374,6 +358,19 @@ async def _show_day_picker(
     free_slots = await slot_repository.list_free_future(now_utc=now_utc)
 
     data = await state.get_data()
+    service_id = data.get("manual_booking_service_id")
+    if isinstance(service_id, int):
+        duration_min = await current_booking_duration_minutes(
+            db_session,
+            base_service_id=service_id,
+            addon_ids=[],
+        )
+        if duration_min is not None:
+            free_slots = await filter_slots_without_booking_overlap(
+                db_session,
+                slots=free_slots,
+                duration_min=duration_min,
+            )
     client_id = data.get("manual_booking_client_id")
     client = (
         await UserRepository(db_session).get_by_id(int(client_id))
@@ -441,6 +438,19 @@ async def manual_booking_day_chosen(
     slot_repository = SlotRepository(db_session)
     slots = await slot_repository.list_free_for_local_day(local_day=local_day, tz_name=tz_name)
     data = await state.get_data()
+    service_id = data.get("manual_booking_service_id")
+    if isinstance(service_id, int):
+        duration_min = await current_booking_duration_minutes(
+            db_session,
+            base_service_id=service_id,
+            addon_ids=[],
+        )
+        if duration_min is not None:
+            slots = await filter_slots_without_booking_overlap(
+                db_session,
+                slots=slots,
+                duration_min=duration_min,
+            )
     client_id = data.get("manual_booking_client_id")
     client = (
         await UserRepository(db_session).get_by_id(int(client_id))
@@ -639,7 +649,11 @@ async def manual_booking_confirm(
     if not result.ok:
         await replace_inline_message_text(
             callback.message,
-            texts.ADMIN_MANUAL_BOOKING_SLOT_TAKEN_TEXT,
+            (
+                texts.BOOKING_SERVICE_UNAVAILABLE_TEXT
+                if result.reason == "service_unavailable"
+                else texts.ADMIN_MANUAL_BOOKING_SLOT_TAKEN_TEXT
+            ),
         )
         await clear_state_preserving_admin_panel(state)
         return

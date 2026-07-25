@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -8,8 +10,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.config import Settings
 from src.db.base import Base
-from src.db.models import Slot, SlotStatus
+from src.db.models import Service, ServiceKind, Slot, SlotStatus, User
 from src.services import calendar_sync
+from src.services.booking import confirm_booking
 
 
 def build_settings() -> Settings:
@@ -127,6 +130,96 @@ async def test_sync_external_calendar_blocks_releases_only_gcal_blocks(monkeypat
         assert gcal_slot.blocked_by_gcal is False
         assert manual_slot.status == SlotStatus.BLOCKED
         assert manual_slot.blocked_by_gcal is False
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_calendar_pull_cannot_block_slot_booked_while_google_responds(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = build_settings()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'calendar-race.db'}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    base_start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    async with session_factory() as session:
+        user = User(
+            tg_id=9101,
+            display_name="Ира",
+            phone="+79990009101",
+            is_admin=False,
+            is_blocked=False,
+        )
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=base_start,
+            status=SlotStatus.FREE,
+            blocked_by_gcal=False,
+        )
+        session.add_all([user, service, slot])
+        await session.commit()
+        user_id = user.id
+        service_id = service.id
+        slot_id = slot.id
+
+    google_started = threading.Event()
+    allow_google_response = threading.Event()
+
+    def delayed_events(_settings, *, time_min, time_max):
+        del time_min, time_max
+        google_started.set()
+        assert allow_google_response.wait(timeout=5)
+        return [
+            {
+                "id": "external-race",
+                "status": "confirmed",
+                "start": {"dateTime": (base_start - timedelta(minutes=10)).isoformat()},
+                "end": {"dateTime": (base_start + timedelta(minutes=30)).isoformat()},
+            }
+        ]
+
+    monkeypatch.setattr(
+        calendar_sync, "session_scope", lambda _settings: make_session_scope(session_factory)
+    )
+    monkeypatch.setattr(calendar_sync, "list_calendar_events", delayed_events)
+
+    sync_task = asyncio.create_task(
+        calendar_sync.sync_external_calendar_blocks(FakeBot(), settings)
+    )
+    assert await asyncio.to_thread(google_started.wait, 5)
+
+    async with session_factory() as session:
+        booked = await confirm_booking(
+            session,
+            client_id=user_id,
+            slot_id=slot_id,
+            base_service_id=service_id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+        )
+        assert booked.ok is True
+
+    allow_google_response.set()
+    await sync_task
+
+    async with session_factory() as session:
+        slot = await session.get(Slot, slot_id)
+        assert slot is not None
+        assert slot.status == SlotStatus.BOOKED
+        assert slot.blocked_by_gcal is False
 
     await engine.dispose()
 

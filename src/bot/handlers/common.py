@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC
 
 from aiogram import F, Router
@@ -234,7 +235,7 @@ async def google_test(
     await message.answer(texts.GOOGLE_TEST_LOADING_TEXT)
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
-        result = run_google_smoke_test(settings)
+        result = await asyncio.to_thread(run_google_smoke_test, settings)
     except Exception as exc:
         await message.answer(texts.GOOGLE_TEST_FAILED_TEXT.format(error=str(exc)))
         return
@@ -282,7 +283,8 @@ async def save_photo(
         if downloaded is None:
             raise RuntimeError("Telegram did not return the file bytes")
         downloaded.seek(0)
-        result = upload_design_photo(
+        result = await asyncio.to_thread(
+            upload_design_photo,
             settings,
             tg_id=owner_tg_id,
             file_name=file_name,
@@ -326,7 +328,11 @@ async def calendar_test(
                 tg_id=from_user.id,
                 tg_username=from_user.username,
             )
-        result = create_smoke_test_event(settings, client=client)
+        result = await asyncio.to_thread(
+            create_smoke_test_event,
+            settings,
+            client=client,
+        )
     except Exception as exc:
         await message.answer(texts.CALENDAR_TEST_FAILED_TEXT.format(error=str(exc)))
         return

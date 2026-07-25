@@ -32,6 +32,7 @@ async def finalize_direct_booking_attempt(
     design_comment: str | None,
     payment_method: str | None,
     settings: Settings,
+    expected_pricing_signature: str | None = None,
 ) -> DirectBookingFinalizeResult:
     """Run the shared orchestration for the final direct-booking step."""
     attempt = await attempt_booking_with_anti_abuse(
@@ -44,6 +45,7 @@ async def finalize_direct_booking_attempt(
         design_comment=design_comment,
         payment_method=payment_method,
         tz_name=settings.tz,
+        expected_pricing_signature=expected_pricing_signature,
     )
 
     if attempt.approval is not None:

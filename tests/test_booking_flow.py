@@ -13,6 +13,8 @@ from src.db.repositories.bookings import BookingRepository
 from src.services.booking import (
     build_addons_prompt_text,
     build_booking_summary_text,
+    build_my_bookings_list_text,
+    build_service_pricing_signature,
     cancel_booking,
     confirm_booking,
     needs_late_cancellation_notice,
@@ -38,6 +40,17 @@ def test_addons_prompt_heading_uses_sentence_case() -> None:
 
     assert text.startswith("💅 Дополнительные опции")
     assert "ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ" not in text
+
+
+def test_my_bookings_heading_uses_sentence_case() -> None:
+    text = build_my_bookings_list_text(
+        active_bookings=[],
+        completed_bookings=[],
+        tz_name="Europe/Moscow",
+    )
+
+    assert text.startswith("🙋‍♀️ Мои записи")
+    assert "МОИ ЗАПИСИ" not in text
 
 
 @pytest.mark.parametrize(
@@ -104,6 +117,34 @@ def test_build_booking_summary_text_uses_structured_confirmation_copy() -> None:
     assert "┣ 📅 Дата и время" in text
     assert "┣ 💵 Итого" in text
     assert "Если всё верно — жми «Подтвердить» 🤍" in text
+
+
+def test_booking_summary_marks_variable_base_service_price() -> None:
+    base_service = Service(
+        name="Сложный дизайн",
+        price=3000,
+        price_variable=True,
+        duration_min=150,
+        kind=ServiceKind.BASE,
+        is_active=True,
+        display_order=10,
+    )
+    slot = Slot(
+        start_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        status=SlotStatus.FREE,
+    )
+
+    text = build_booking_summary_text(
+        base_service=base_service,
+        addons=[],
+        slot=slot,
+        tz_name="Europe/Moscow",
+        design_photo_count=0,
+        design_comment=None,
+        payment_method=None,
+    )
+
+    assert "3000₽ + доп." in text
 
 
 @pytest.mark.asyncio
@@ -239,6 +280,152 @@ async def test_confirm_booking_rejects_already_taken_slot() -> None:
         assert second_result.ok is False
         assert second_result.reason == "slot_unavailable"
         assert booking_count == 1
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_confirm_booking_rejects_deactivated_service() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(tg_id=1010, display_name="Аня")
+        service = Service(
+            name="Старый прайс",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=False,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.FREE,
+        )
+        session.add_all([user, service, slot])
+        await session.commit()
+
+        result = await confirm_booking(
+            session,
+            client_id=user.id,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+        )
+
+        assert result.ok is False
+        assert result.reason == "service_unavailable"
+        assert slot.status == SlotStatus.FREE
+        assert await session.scalar(select(func.count(Booking.id))) == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_confirm_booking_rejects_deactivated_addon() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(tg_id=1011, display_name="Аня")
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        addon = Service(
+            name="Старый дизайн",
+            price=300,
+            price_variable=False,
+            duration_min=15,
+            kind=ServiceKind.ADDON,
+            is_active=False,
+            display_order=20,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.FREE,
+        )
+        session.add_all([user, service, addon, slot])
+        await session.commit()
+
+        result = await confirm_booking(
+            session,
+            client_id=user.id,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[addon.id],
+            design_photos=[],
+            design_comment=None,
+        )
+
+        assert result.ok is False
+        assert result.reason == "service_unavailable"
+        assert slot.status == SlotStatus.FREE
+        assert await session.scalar(select(func.count(Booking.id))) == 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_confirm_booking_rejects_price_changed_after_summary() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(tg_id=1012, display_name="Аня")
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.FREE,
+        )
+        session.add_all([user, service, slot])
+        await session.flush()
+        shown_signature = build_service_pricing_signature(
+            base_service=service,
+            addons=[],
+        )
+        service.price = 2600
+        await session.commit()
+
+        result = await confirm_booking(
+            session,
+            client_id=user.id,
+            slot_id=slot.id,
+            base_service_id=service.id,
+            addon_ids=[],
+            design_photos=[],
+            design_comment=None,
+            expected_pricing_signature=shown_signature,
+        )
+
+        assert result.ok is False
+        assert result.reason == "price_changed"
+        assert result.fixed_price == 2600
+        assert slot.status == SlotStatus.FREE
+        assert await session.scalar(select(func.count(Booking.id))) == 0
 
     await engine.dispose()
 

@@ -144,7 +144,7 @@ def build_client_approval_confirmed_text(
     local_dt = format_local_datetime(start_at, tz_name)
     address_block = address_text.strip() or "—"
     return (
-        "<b>✅ ЗАПИСЬ ПОДТВЕРЖДЕНА</b>\n\n"
+        "<b>✅ Запись подтверждена</b>\n\n"
         f"<b>📅 {escape(format_local_day_label(local_dt.date()))}</b>\n"
         f"<b>⏰ {escape(local_dt.strftime('%H:%M'))}</b>\n"
         f"💅 {escape(base_service_name)}\n"

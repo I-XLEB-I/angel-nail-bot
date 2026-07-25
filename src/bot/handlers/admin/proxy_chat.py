@@ -23,7 +23,7 @@ from src.bot.keyboards.admin import (
 )
 from src.bot.keyboards.client import build_back_to_menu_keyboard, build_proxy_reply_keyboard
 from src.bot.states import AdminReplying, ClientProxyReply
-from src.bot.ui_utils import upsert_inline_panel
+from src.bot.ui_utils import replace_inline_message_text, upsert_inline_panel
 from src.db.models import User, utcnow
 from src.db.repositories.approvals import ApprovalRequestRepository
 from src.db.repositories.rate_limit_events import RateLimitEventRepository
@@ -38,7 +38,8 @@ from src.services.notifications import (
     send_voice_to_admins,
 )
 
-router = Router(name="admin_proxy_chat")
+router = Router(name="client_proxy_chat")
+admin_router = Router(name="admin_proxy_chat")
 
 QUICK_APPROVAL_REPLIES = {
     "after_19": texts.ADMIN_APPROVAL_QUICK_REPLY_AFTER_19_TEXT,
@@ -47,7 +48,7 @@ QUICK_APPROVAL_REPLIES = {
 }
 
 
-@router.callback_query(F.data.startswith("approval:reply:"))
+@admin_router.callback_query(F.data.startswith("approval:reply:"))
 async def start_admin_reply(
     callback: CallbackQuery,
     state: FSMContext,
@@ -83,7 +84,7 @@ async def start_admin_reply(
     await remember_admin_panel(state, panel)
 
 
-@router.callback_query(F.data.startswith("approval:quick_reply:"))
+@admin_router.callback_query(F.data.startswith("approval:quick_reply:"))
 async def send_admin_quick_reply(
     callback: CallbackQuery,
     state: FSMContext,
@@ -132,6 +133,9 @@ async def send_admin_quick_reply(
 async def start_client_proxy_reply(
     callback: CallbackQuery,
     state: FSMContext,
+    *,
+    db_session: AsyncSession,
+    user: User,
 ) -> None:
     """Switch a client into reply mode for an active proxy-chat thread."""
     await callback.answer()
@@ -139,6 +143,16 @@ async def start_client_proxy_reply(
         return
 
     approval_id = int(callback.data.rsplit(":", 1)[1])
+    approval = await ApprovalRequestRepository(db_session).get_by_id(approval_id)
+    if approval is None or approval.client_id != user.id:
+        await clear_state_preserving_admin_mode(state)
+        await replace_inline_message_text(
+            callback.message,
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            reply_markup=build_back_to_menu_keyboard(),
+        )
+        return
+
     await clear_state_preserving_admin_mode(state)
     await state.set_state(ClientProxyReply.input_message)
     await state.update_data(proxy_approval_id=approval_id)
@@ -148,9 +162,9 @@ async def start_client_proxy_reply(
     )
 
 
-@router.message(StateFilter(AdminReplying.input_message), F.text)
-@router.message(StateFilter(AdminReplying.input_message), F.photo)
-@router.message(StateFilter(AdminReplying.input_message), F.voice)
+@admin_router.message(StateFilter(AdminReplying.input_message), F.text)
+@admin_router.message(StateFilter(AdminReplying.input_message), F.photo)
+@admin_router.message(StateFilter(AdminReplying.input_message), F.voice)
 async def submit_admin_reply(
     message: Message,
     state: FSMContext,
@@ -257,7 +271,7 @@ async def submit_client_proxy_reply(
         return
 
     approval = await ApprovalRequestRepository(db_session).get_by_id(int(approval_id))
-    if approval is None:
+    if approval is None or approval.client_id != user.id:
         await clear_state_preserving_admin_mode(state)
         await message.answer(
             texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,

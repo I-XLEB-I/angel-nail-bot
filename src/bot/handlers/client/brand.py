@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from aiogram import Bot
@@ -9,6 +10,7 @@ from src.bot.ui_utils import replace_inline_message_panel
 from src.services.template_media import has_template_media, template_media_path
 
 BRAND_IMAGE_PATH = Path(__file__).resolve().parents[4] / "assets" / "brand.jpg"
+logger = logging.getLogger(__name__)
 
 
 def load_image_bytes(path: Path) -> bytes | None:
@@ -73,7 +75,10 @@ async def send_brand_message(
                 )
                 return
             except Exception:
-                pass
+                logger.warning(
+                    "Could not send template media; falling back to text",
+                    exc_info=True,
+                )
             else:
                 return
 
@@ -130,7 +135,10 @@ async def send_template_message(
                 )
                 return
             except Exception:
-                pass
+                logger.warning(
+                    "Could not send template photo; falling back to text",
+                    exc_info=True,
+                )
             else:
                 return
 
@@ -186,7 +194,10 @@ async def send_brand_bot_message(
             )
             return
         except Exception:
-            pass
+            logger.warning(
+                "Could not proactively send template photo; falling back to text",
+                exc_info=True,
+            )
         else:
             return
     try:

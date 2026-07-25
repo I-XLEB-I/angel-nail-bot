@@ -236,7 +236,8 @@ def _render_client_bookings_line(booking: Booking, *, tz_name: str) -> str:
     if booking.slot is None or booking.base_service is None:
         return "—"
     local_dt = format_local_datetime(booking.slot.start_at, tz_name)
-    return f"{local_dt:%d.%m · %H:%M} · {booking.base_service.name} · {get_booking_status_label(booking.status)}"
+    status_label = get_booking_status_label(booking.status)
+    return f"{local_dt:%d.%m · %H:%M} · {booking.base_service.name} · {status_label}"
 
 
 def render_client_bookings_card(
@@ -250,7 +251,10 @@ def render_client_bookings_card(
     lines = [f"📅 Записи · {user.display_name}", ""]
     lines.append("Активные:")
     if active_bookings:
-        lines.extend(_render_client_bookings_line(booking, tz_name=tz_name) for booking in active_bookings)
+        lines.extend(
+            _render_client_bookings_line(booking, tz_name=tz_name)
+            for booking in active_bookings
+        )
     else:
         lines.append("Активных записей сейчас нет")
     lines.extend(["", "История:"])
@@ -942,7 +946,9 @@ async def send_client_message(
     panel_chat_id = data.get(ADMIN_PANEL_CHAT_ID_KEY)
     panel_message_id = data.get(ADMIN_PANEL_MESSAGE_ID_KEY)
     booking_card_id = data.get("admin_booking_card_id")
-    booking_card_back_callback = str(data.get("admin_booking_card_back_callback") or "admin_menu:home")
+    booking_card_back_callback = str(
+        data.get("admin_booking_card_back_callback") or "admin_menu:home"
+    )
     if not target_tg_id or not client_id:
         await state.clear()
         await message.answer("Не нашла получателя.")

@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -42,8 +44,17 @@ class JsonFsmStorage(BaseStorage):
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w") as fh:
-            json.dump(self._cache, fh)
+        temporary_path = self._path.with_name(
+            f".{self._path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            with temporary_path.open("w") as fh:
+                json.dump(self._cache, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary_path, self._path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     @staticmethod
     def _normalize_state_value(state: StateType) -> str | None:
@@ -69,13 +80,21 @@ class JsonFsmStorage(BaseStorage):
             if not self._loaded:
                 self._load()
             k = self._make_key(key)
+            previous_entry = deepcopy(self._cache.get(k))
             entry = self._cache.setdefault(k, {})
             normalized_state = self._normalize_state_value(state)
             if normalized_state is None:
                 entry.pop("state", None)
             else:
                 entry["state"] = normalized_state
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                if previous_entry is None:
+                    self._cache.pop(k, None)
+                else:
+                    self._cache[k] = previous_entry
+                raise
 
     async def get_state(self, key: StorageKey) -> str | None:
         async with self._lock:
@@ -89,12 +108,20 @@ class JsonFsmStorage(BaseStorage):
             if not self._loaded:
                 self._load()
             k = self._make_key(key)
+            previous_entry = deepcopy(self._cache.get(k))
             entry = self._cache.setdefault(k, {})
             if data:
                 entry["data"] = data
             else:
                 entry.pop("data", None)
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                if previous_entry is None:
+                    self._cache.pop(k, None)
+                else:
+                    self._cache[k] = previous_entry
+                raise
 
     async def get_data(self, key: StorageKey) -> dict[str, Any]:
         async with self._lock:

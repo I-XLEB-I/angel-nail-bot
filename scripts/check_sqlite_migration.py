@@ -20,12 +20,11 @@ Exits with non-zero status on any detected issue.
 from __future__ import annotations
 
 import os
-import subprocess
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,7 +54,7 @@ def check_autoincrement_pks(db_path: Path) -> list[str]:
             "AND name NOT LIKE 'sqlite_%'"
         )
         broken: list[str] = []
-        for name, sql in cursor.fetchall():
+        for name, _sql in cursor.fetchall():
             # Heuristic: if a column called `id` is declared as something other
             # than INTEGER and acts as the PK, autoincrement is broken.
             cols = list(conn.execute(f"PRAGMA table_info({name})"))
@@ -67,7 +66,9 @@ def check_autoincrement_pks(db_path: Path) -> list[str]:
             if not is_pk:
                 continue
             if col_type != "INTEGER":
-                broken.append(f"{name}: id is {col_type}, expected INTEGER (SQLite alias for ROWID)")
+                broken.append(
+                    f"{name}: id is {col_type}, expected INTEGER (SQLite alias for ROWID)"
+                )
         return broken
     finally:
         conn.close()

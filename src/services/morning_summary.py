@@ -9,7 +9,7 @@ from aiogram import Bot
 
 from src.config import Settings
 from src.db.base import session_scope
-from src.db.models import Booking, BookingStatus, utcnow
+from src.db.models import Booking, utcnow
 from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.morning_summary_deliveries import MorningSummaryDeliveryRepository
 from src.db.repositories.settings import SettingRepository
@@ -446,8 +446,8 @@ async def send_morning_summary(bot: Bot, settings: Settings) -> None:
         )
         delivery_repository = MorningSummaryDeliveryRepository(session)
         sent_at = utcnow()
-        try:
-            for admin_tg_id in admin_tg_ids:
+        for admin_tg_id in admin_tg_ids:
+            try:
                 await _send_or_update_summary_message(
                     bot,
                     delivery_repository=delivery_repository,
@@ -456,7 +456,10 @@ async def send_morning_summary(bot: Bot, settings: Settings) -> None:
                     text=text,
                     sent_at=sent_at,
                 )
-            await session.commit()
-        except Exception:
-            logger.exception("Failed to send morning summary")
-            await session.rollback()
+                await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to send morning summary to admin %s",
+                    admin_tg_id,
+                )
+                await session.rollback()

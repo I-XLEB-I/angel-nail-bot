@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -579,7 +580,6 @@ async def submit_booking_card_reschedule(
     slots = SlotRepository(db_session)
     slot, _ = await slots.create_if_missing(new_start_at)
     if slot.status != SlotStatus.FREE and slot.id != booking.slot_id:
-        await db_session.rollback()
         await send_admin_panel(
             message,
             state,
@@ -621,10 +621,14 @@ async def submit_booking_card_reschedule(
     if booking.gcal_event_id:
         try:
             addons = await load_booking_addons(db_session, booking)
-            update_booking_event(
+            await asyncio.to_thread(
+                update_booking_event,
                 settings,
                 event_id=booking.gcal_event_id,
-                booking=build_calendar_booking_info_from_booking(booking, addons=addons),
+                booking=build_calendar_booking_info_from_booking(
+                    booking,
+                    addons=addons,
+                ),
             )
         except Exception:
             logger.exception("Failed to update calendar event for booking %s", booking.id)
@@ -702,10 +706,26 @@ async def confirm_booking_card_cancel(
         await replace_inline_message_text(callback.message, texts.ADMIN_ALL_BOOKINGS_NOT_FOUND_TEXT)
         return
 
-    released_slot = await cancel_booking_by_master(db_session, booking=booking)
+    cancellation = await cancel_booking_by_master(db_session, booking=booking)
+    if not cancellation.ok:
+        await replace_inline_message_text(
+            callback.message,
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            reply_markup=build_booking_card_back_keyboard(
+                booking_id=booking.id,
+                back_callback=back_callback,
+            ),
+        )
+        return
+
+    released_slot = cancellation.released_slot
     if booking.gcal_event_id:
         try:
-            delete_booking_event(settings, event_id=booking.gcal_event_id)
+            await asyncio.to_thread(
+                delete_booking_event,
+                settings,
+                event_id=booking.gcal_event_id,
+            )
         except Exception:
             logger.exception("Failed to delete calendar event for booking %s", booking.id)
 
@@ -791,14 +811,30 @@ async def confirm_booking_card_no_show(
         return
 
     anti_abuse_settings = await get_anti_abuse_settings(db_session)
-    apply_booking_no_show(
+    no_show_result = await apply_booking_no_show(
+        db_session,
         booking,
         no_show_strike_limit=anti_abuse_settings["no_show_strike_limit"],
         now_utc=datetime.now(UTC),
     )
-    rescue_slot_id: int | None = None
-    if booking.slot is not None and slot_is_rescuable(booking.slot):
-        rescue_slot_id = booking.slot.id
+    if not no_show_result.ok:
+        await show_booking_card(
+            callback.message,
+            db_session=db_session,
+            settings=settings,
+            booking_id=booking.id,
+            back_callback=back_callback,
+            edit=True,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
+
+    rescue_slot_id = (
+        no_show_result.released_slot.id
+        if no_show_result.released_slot is not None
+        and slot_is_rescuable(no_show_result.released_slot)
+        else None
+    )
     await record_rate_event(
         db_session,
         user_id=booking.client.id,

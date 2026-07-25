@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.bot.app import build_application
 from src.bot.commands import register_bot_commands
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.db.base import get_engine, make_database_url
 from src.logger import configure_logging
 from src.scheduler import build_scheduler
@@ -16,9 +16,9 @@ from src.services.observability import log_event
 logger = logging.getLogger(__name__)
 
 
-def ensure_runtime_secret_files() -> None:
+def ensure_runtime_secret_files(settings: Settings | None = None) -> None:
     """Materialize JSON secrets from env vars into the file paths the app expects."""
-    settings = get_settings()
+    settings = settings or get_settings()
     secret_sources: Iterable[tuple[str, Path]] = (
         (settings.gcal_credentials_json, settings.gcal_credentials_path),
         (settings.google_service_account_json, settings.google_service_account_path),
@@ -31,13 +31,15 @@ def ensure_runtime_secret_files() -> None:
         resolved_path = target_path.expanduser().resolve()
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
         if resolved_path.exists() and resolved_path.read_text(encoding="utf-8") == secret_json:
+            resolved_path.chmod(0o600)
             continue
         resolved_path.write_text(secret_json, encoding="utf-8")
+        resolved_path.chmod(0o600)
 
 
-def ensure_sqlite_parent_dir() -> None:
+def ensure_sqlite_parent_dir(settings: Settings | None = None) -> None:
     """Create the SQLite directory if the configured database uses a file path."""
-    database_url = make_database_url()
+    database_url = make_database_url(settings)
     if not database_url.drivername.startswith("sqlite"):
         return
     database_path = database_url.database
@@ -50,8 +52,8 @@ async def main() -> None:
     """Run the Telegram bot with the scheduler."""
     settings = get_settings()
     configure_logging(settings.log_level)
-    ensure_runtime_secret_files()
-    ensure_sqlite_parent_dir()
+    ensure_runtime_secret_files(settings)
+    ensure_sqlite_parent_dir(settings)
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is not configured. Fill it in .env before starting the bot.")
 
@@ -64,7 +66,7 @@ async def main() -> None:
         logging.INFO,
         "bot_starting",
         tz=settings.tz,
-        database_url=str(make_database_url(settings)),
+        database_url=make_database_url(settings).render_as_string(hide_password=True),
         gcal_enabled=settings.gcal_enabled,
         admin_count=len(settings.admin_tg_ids),
     )

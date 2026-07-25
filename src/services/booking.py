@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import re
+from asyncio import AbstractEventLoop
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update
+from sqlalchemy import case, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.bot import texts
 from src.db.models import (
@@ -92,7 +96,7 @@ class ConfirmBookingResult:
     reason: str | None
     booking: Booking | None
     slot: Slot | None
-    base_service: Service
+    base_service: Service | None
     addons: list[Service]
     fixed_price: int
     has_variable_price: bool
@@ -107,6 +111,356 @@ class RescheduleBookingResult:
     booking: Booking
     old_slot: Slot | None
     new_slot: Slot | None
+
+
+@dataclass(slots=True)
+class CancelBookingResult:
+    """Result of an atomic booking cancellation."""
+
+    ok: bool
+    reason: str | None
+    booking: Booking
+    released_slot: Slot | None
+
+
+@dataclass(slots=True)
+class NoShowBookingResult:
+    """Result of atomically marking a booking as a no-show."""
+
+    ok: bool
+    reason: str | None
+    booking: Booking
+    released_slot: Slot | None
+    strikes: int
+    requires_manual_approval: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BookingInterval:
+    """One active appointment interval used for overlap checks."""
+
+    booking_id: int
+    start_at: datetime
+    end_at: datetime
+
+
+ACTIVE_SLOT_BOOKING_STATUSES = (
+    BookingStatus.PENDING_MASTER,
+    BookingStatus.CONFIRMED,
+)
+_BOOKING_TRANSITION_LOCKS: WeakKeyDictionary[AbstractEventLoop, asyncio.Lock] = (
+    WeakKeyDictionary()
+)
+
+
+def _booking_transition_lock() -> asyncio.Lock:
+    """Return the booking critical-section lock bound to the current event loop."""
+    loop = asyncio.get_running_loop()
+    lock = _BOOKING_TRANSITION_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _BOOKING_TRANSITION_LOCKS[loop] = lock
+    return lock
+
+
+async def _load_booking_service_selection(
+    session: AsyncSession,
+    *,
+    base_service_id: int,
+    addon_ids: list[int],
+    require_active: bool,
+) -> tuple[Service, list[Service]] | None:
+    """Load and validate a base service plus every selected add-on."""
+    base_conditions = [
+        Service.id == base_service_id,
+        Service.kind == ServiceKind.BASE,
+    ]
+    if require_active:
+        base_conditions.append(Service.is_active.is_(True))
+    base_service = await session.scalar(
+        select(Service)
+        .where(*base_conditions)
+        .execution_options(populate_existing=True)
+    )
+    if base_service is None:
+        return None
+
+    unique_addon_ids = list(dict.fromkeys(addon_ids))
+    if not unique_addon_ids:
+        return base_service, []
+
+    addon_conditions = [
+        Service.id.in_(unique_addon_ids),
+        Service.kind == ServiceKind.ADDON,
+    ]
+    if require_active:
+        addon_conditions.append(Service.is_active.is_(True))
+    addons = list(
+        (
+            await session.scalars(
+                select(Service)
+                .where(*addon_conditions)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .unique()
+        .all()
+    )
+    if len(addons) != len(unique_addon_ids):
+        return None
+    return base_service, addons
+
+
+async def booking_service_selection_is_active(
+    session: AsyncSession,
+    *,
+    base_service_id: int,
+    addon_ids: list[int],
+) -> bool:
+    """Return whether every selected service still exists and is bookable."""
+    return (
+        await current_booking_pricing_signature(
+            session,
+            base_service_id=base_service_id,
+            addon_ids=addon_ids,
+        )
+        is not None
+    )
+
+
+def build_service_pricing_signature(
+    *,
+    base_service: Service,
+    addons: list[Service],
+) -> str:
+    """Build a stable fingerprint for the prices shown at confirmation time."""
+    parts = [
+        (
+            f"base:{base_service.id}:{base_service.price}:"
+            f"{int(base_service.price_variable)}"
+        )
+    ]
+    parts.extend(
+        f"addon:{service.id}:{service.price}:{int(service.price_variable)}"
+        for service in sorted(addons, key=lambda item: item.id)
+    )
+    return "|".join(parts)
+
+
+async def current_booking_pricing_signature(
+    session: AsyncSession,
+    *,
+    base_service_id: int,
+    addon_ids: list[int],
+) -> str | None:
+    """Return the current fingerprint, or None for an invalid service selection."""
+    selection = await _load_booking_service_selection(
+        session,
+        base_service_id=base_service_id,
+        addon_ids=addon_ids,
+        require_active=True,
+    )
+    if selection is None:
+        return None
+    base_service, addons = selection
+    return build_service_pricing_signature(
+        base_service=base_service,
+        addons=addons,
+    )
+
+
+async def current_booking_duration_minutes(
+    session: AsyncSession,
+    *,
+    base_service_id: int,
+    addon_ids: list[int],
+    require_active: bool = True,
+) -> int | None:
+    """Return the current appointment duration for a valid service selection."""
+    selection = await _load_booking_service_selection(
+        session,
+        base_service_id=base_service_id,
+        addon_ids=addon_ids,
+        require_active=require_active,
+    )
+    if selection is None:
+        return None
+    base_service, addons = selection
+    return calculate_booking_duration(
+        base_service=base_service,
+        addons=addons,
+    )
+
+
+def _normalize_utc(value: datetime) -> datetime:
+    """Normalize SQLite-naive and timezone-aware datetimes to aware UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def booking_intervals_overlap(
+    *,
+    first_start: datetime,
+    first_duration_min: int,
+    second_start: datetime,
+    second_end: datetime,
+) -> bool:
+    """Return whether two half-open appointment intervals intersect."""
+    normalized_first_start = _normalize_utc(first_start)
+    first_end = normalized_first_start + timedelta(minutes=max(first_duration_min, 1))
+    normalized_second_start = _normalize_utc(second_start)
+    normalized_second_end = _normalize_utc(second_end)
+    return (
+        normalized_first_start < normalized_second_end
+        and normalized_second_start < first_end
+    )
+
+
+async def load_active_booking_intervals(
+    session: AsyncSession,
+    *,
+    exclude_booking_id: int | None = None,
+) -> list[BookingInterval]:
+    """Load active booking intervals using current service durations."""
+    query = (
+        select(Booking)
+        .options(
+            selectinload(Booking.slot),
+            selectinload(Booking.base_service),
+        )
+        .where(
+            Booking.status.in_(ACTIVE_SLOT_BOOKING_STATUSES),
+            Booking.slot_id.is_not(None),
+        )
+        .execution_options(populate_existing=True)
+    )
+    if exclude_booking_id is not None:
+        query = query.where(Booking.id != exclude_booking_id)
+    bookings = list((await session.scalars(query)).unique().all())
+    addon_ids = list(
+        {
+            addon_id
+            for booking in bookings
+            for addon_id in list(booking.addons or [])
+        }
+    )
+    addon_map: dict[int, Service] = {}
+    if addon_ids:
+        addons = list(
+            (
+                await session.scalars(
+                    select(Service)
+                    .where(Service.id.in_(addon_ids))
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .unique()
+            .all()
+        )
+        addon_map = {service.id: service for service in addons}
+
+    intervals: list[BookingInterval] = []
+    for booking in bookings:
+        if booking.slot is None or booking.base_service is None:
+            continue
+        booking_addons = [
+            addon_map[addon_id]
+            for addon_id in list(booking.addons or [])
+            if addon_id in addon_map
+        ]
+        duration_min = calculate_booking_duration(
+            base_service=booking.base_service,
+            addons=booking_addons,
+        )
+        start_at = _normalize_utc(booking.slot.start_at)
+        intervals.append(
+            BookingInterval(
+                booking_id=booking.id,
+                start_at=start_at,
+                end_at=start_at + timedelta(minutes=duration_min),
+            )
+        )
+    return intervals
+
+
+async def booking_interval_is_available(
+    session: AsyncSession,
+    *,
+    start_at: datetime,
+    duration_min: int,
+    exclude_booking_id: int | None = None,
+) -> bool:
+    """Return whether an appointment interval avoids every active booking."""
+    intervals = await load_active_booking_intervals(
+        session,
+        exclude_booking_id=exclude_booking_id,
+    )
+    return not any(
+        booking_intervals_overlap(
+            first_start=start_at,
+            first_duration_min=duration_min,
+            second_start=interval.start_at,
+            second_end=interval.end_at,
+        )
+        for interval in intervals
+    )
+
+
+async def filter_slots_without_booking_overlap(
+    session: AsyncSession,
+    *,
+    slots: list[Slot],
+    duration_min: int,
+    exclude_booking_id: int | None = None,
+) -> list[Slot]:
+    """Remove free starts that would overlap an active appointment."""
+    intervals = await load_active_booking_intervals(
+        session,
+        exclude_booking_id=exclude_booking_id,
+    )
+    return [
+        slot
+        for slot in slots
+        if not any(
+            booking_intervals_overlap(
+                first_start=slot.start_at,
+                first_duration_min=duration_min,
+                second_start=interval.start_at,
+                second_end=interval.end_at,
+            )
+            for interval in intervals
+        )
+    ]
+
+
+async def _release_slot_if_unused(
+    session: AsyncSession,
+    *,
+    slot_id: int,
+    loaded_slot: Slot | None,
+) -> Slot | None:
+    """Release a booked slot only when no active booking still owns it."""
+    release_result = await session.execute(
+        update(Slot)
+        .where(
+            Slot.id == slot_id,
+            Slot.status == SlotStatus.BOOKED,
+            ~exists(
+                select(Booking.id).where(
+                    Booking.slot_id == slot_id,
+                    Booking.status.in_(ACTIVE_SLOT_BOOKING_STATUSES),
+                )
+            ),
+        )
+        .values(status=SlotStatus.FREE)
+        .execution_options(synchronize_session=False)
+    )
+    if release_result.rowcount != 1:
+        return None
+    if loaded_slot is not None:
+        loaded_slot.status = SlotStatus.FREE
+    return loaded_slot
 
 
 def needs_onboarding(user: User) -> bool:
@@ -306,10 +660,10 @@ def build_booking_summary_text(
     payment_method: str | None,
 ) -> str:
     """Render the booking confirmation summary."""
-    fixed_price = base_service.price + sum(
-        service.price for service in addons if not service.price_variable
+    fixed_price, has_variable_price = calculate_booking_price(
+        base_service=base_service,
+        addons=addons,
     )
-    has_variable_price = any(service.price_variable for service in addons)
     local_dt = format_local_datetime(slot.start_at, tz_name)
     service_line = f"{base_service.name} — {base_service.price}₽"
 
@@ -358,6 +712,33 @@ def build_booking_summary_text(
 
     lines.extend(["", "Если всё верно — жми «Подтвердить» 🤍"])
     return "\n".join(lines)
+
+
+def calculate_booking_price(
+    *,
+    base_service: Service,
+    addons: list[Service],
+) -> tuple[int, bool]:
+    """Return the fixed part and whether any selected service is variable-priced."""
+    fixed_price = base_service.price + sum(
+        service.price for service in addons if not service.price_variable
+    )
+    has_variable_price = base_service.price_variable or any(
+        service.price_variable for service in addons
+    )
+    return fixed_price, has_variable_price
+
+
+def calculate_booking_duration(
+    *,
+    base_service: Service,
+    addons: list[Service],
+) -> int:
+    """Return the occupied appointment interval in minutes."""
+    return max(
+        30,
+        base_service.duration_min + sum(service.duration_min for service in addons),
+    )
 
 
 def build_receipt_text(*, base_service: Service, slot: Slot, tz_name: str) -> str:
@@ -561,7 +942,7 @@ def build_my_bookings_list_text(
     tz_name: str,
 ) -> str:
     """Render the overview text for the `Мои записи` section."""
-    lines = ["🙋‍♀️ МОИ ЗАПИСИ", ""]
+    lines = ["🙋‍♀️ Мои записи", ""]
 
     if active_bookings:
         nearest, *other_active = active_bookings
@@ -833,23 +1214,83 @@ async def confirm_booking(
     design_comment: str | None,
     payment_method: str | None = None,
     created_via: BookingCreatedVia = BookingCreatedVia.BOT,
+    expected_pricing_signature: str | None = None,
+    allow_inactive_base_service: bool = False,
+) -> ConfirmBookingResult:
+    """Serialize and atomically validate one booking confirmation."""
+    async with _booking_transition_lock():
+        return await _confirm_booking_unlocked(
+            session,
+            client_id=client_id,
+            slot_id=slot_id,
+            base_service_id=base_service_id,
+            addon_ids=addon_ids,
+            design_photos=design_photos,
+            design_comment=design_comment,
+            payment_method=payment_method,
+            created_via=created_via,
+            expected_pricing_signature=expected_pricing_signature,
+            allow_inactive_base_service=allow_inactive_base_service,
+        )
+
+
+async def _confirm_booking_unlocked(
+    session: AsyncSession,
+    *,
+    client_id: int,
+    slot_id: int,
+    base_service_id: int,
+    addon_ids: list[int],
+    design_photos: list[str],
+    design_comment: str | None,
+    payment_method: str | None,
+    created_via: BookingCreatedVia,
+    expected_pricing_signature: str | None,
+    allow_inactive_base_service: bool,
 ) -> ConfirmBookingResult:
     """Atomically book a slot and create a confirmed booking."""
-    base_service = await session.get(Service, base_service_id)
-    if base_service is None or base_service.kind != ServiceKind.BASE:
-        raise ValueError("Base service not found or invalid")
+    base_service = await session.get(Service, base_service_id, populate_existing=True)
+    if (
+        base_service is None
+        or base_service.kind != ServiceKind.BASE
+        or (not base_service.is_active and not allow_inactive_base_service)
+    ):
+        return ConfirmBookingResult(
+            ok=False,
+            reason="service_unavailable",
+            booking=None,
+            slot=None,
+            base_service=base_service,
+            addons=[],
+            fixed_price=0,
+            has_variable_price=False,
+        )
 
     unique_addon_ids = list(dict.fromkeys(addon_ids))
     addons: list[Service] = []
     if unique_addon_ids:
         addon_result = await session.execute(
             select(Service)
-            .where(Service.id.in_(unique_addon_ids), Service.kind == ServiceKind.ADDON)
+            .where(
+                Service.id.in_(unique_addon_ids),
+                Service.kind == ServiceKind.ADDON,
+                Service.is_active.is_(True),
+            )
             .order_by(Service.display_order, Service.id)
+            .execution_options(populate_existing=True)
         )
         addons = list(addon_result.scalars().all())
         if len(addons) != len(unique_addon_ids):
-            raise ValueError("One or more add-ons were not found")
+            return ConfirmBookingResult(
+                ok=False,
+                reason="service_unavailable",
+                booking=None,
+                slot=None,
+                base_service=base_service,
+                addons=addons,
+                fixed_price=base_service.price,
+                has_variable_price=base_service.price_variable,
+            )
 
     slot = await session.get(Slot, slot_id)
     if slot is None:
@@ -865,27 +1306,76 @@ async def confirm_booking(
             or any(service.price_variable for service in addons),
         )
 
-    fixed_price = base_service.price + sum(
-        service.price for service in addons if not service.price_variable
+    fixed_price, has_variable_price = calculate_booking_price(
+        base_service=base_service,
+        addons=addons,
     )
-    has_variable_price = base_service.price_variable or any(
-        service.price_variable for service in addons
+    duration_min = calculate_booking_duration(
+        base_service=base_service,
+        addons=addons,
     )
+    current_pricing_signature = build_service_pricing_signature(
+        base_service=base_service,
+        addons=addons,
+    )
+    if (
+        expected_pricing_signature is not None
+        and current_pricing_signature != expected_pricing_signature
+    ):
+        return ConfirmBookingResult(
+            ok=False,
+            reason="price_changed",
+            booking=None,
+            slot=slot,
+            base_service=base_service,
+            addons=addons,
+            fixed_price=fixed_price,
+            has_variable_price=has_variable_price,
+        )
 
+    current_utc = datetime.now(UTC)
     update_result = await session.execute(
         update(Slot)
         .where(
             Slot.id == slot_id,
             Slot.status == SlotStatus.FREE,
+            Slot.start_at > current_utc,
+            ~exists(
+                select(Booking.id).where(
+                    Booking.slot_id == slot_id,
+                    Booking.status.in_(ACTIVE_SLOT_BOOKING_STATUSES),
+                )
+            ),
         )
         .values(status=SlotStatus.BOOKED)
+        .execution_options(synchronize_session=False)
     )
 
     if update_result.rowcount != 1:
-        await session.rollback()
         return ConfirmBookingResult(
             ok=False,
             reason="slot_unavailable",
+            booking=None,
+            slot=slot,
+            base_service=base_service,
+            addons=addons,
+            fixed_price=fixed_price,
+            has_variable_price=has_variable_price,
+        )
+
+    if not await booking_interval_is_available(
+        session,
+        start_at=slot.start_at,
+        duration_min=duration_min,
+    ):
+        await _release_slot_if_unused(
+            session,
+            slot_id=slot_id,
+            loaded_slot=slot,
+        )
+        return ConfirmBookingResult(
+            ok=False,
+            reason="time_overlap",
             booking=None,
             slot=slot,
             base_service=base_service,
@@ -931,25 +1421,61 @@ async def cancel_booking(
     booking: Booking,
     reason_code: str,
     reason_text: str | None = None,
-) -> Slot | None:
-    """Cancel a client booking and release its slot."""
-    released_slot = booking.slot
-
-    if booking.slot_id is not None:
-        await session.execute(
-            update(Slot).where(Slot.id == booking.slot_id).values(status=SlotStatus.FREE)
+) -> CancelBookingResult:
+    """Atomically cancel a client booking and release its slot."""
+    expected_status = booking.status
+    expected_slot_id = booking.slot_id
+    if expected_status not in ACTIVE_SLOT_BOOKING_STATUSES:
+        return CancelBookingResult(
+            ok=False,
+            reason="not_active",
+            booking=booking,
+            released_slot=None,
         )
-        if released_slot is not None:
-            released_slot.status = SlotStatus.FREE
+
+    cancel_reason_text = (
+        ((reason_text or "").strip() or None) if reason_code == "other" else None
+    )
+    transition = await session.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.status == expected_status,
+            Booking.slot_id == expected_slot_id,
+        )
+        .values(
+            status=BookingStatus.CANCELLED_BY_CLIENT,
+            cancel_reason_code=reason_code,
+            cancel_reason_text=cancel_reason_text,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return CancelBookingResult(
+            ok=False,
+            reason="booking_changed",
+            booking=booking,
+            released_slot=None,
+        )
+
+    released_slot = None
+    if expected_slot_id is not None:
+        released_slot = await _release_slot_if_unused(
+            session,
+            slot_id=expected_slot_id,
+            loaded_slot=booking.slot,
+        )
 
     booking.status = BookingStatus.CANCELLED_BY_CLIENT
     booking.cancel_reason_code = reason_code
-    booking.cancel_reason_text = (
-        (reason_text or "").strip() or None if reason_code == "other" else None
-    )
-    await session.flush()
+    booking.cancel_reason_text = cancel_reason_text
     await session.commit()
-    return released_slot
+    return CancelBookingResult(
+        ok=True,
+        reason=None,
+        booking=booking,
+        released_slot=released_slot,
+    )
 
 
 async def cancel_booking_by_master(
@@ -957,40 +1483,155 @@ async def cancel_booking_by_master(
     *,
     booking: Booking,
     reason_text: str | None = None,
-) -> Slot | None:
-    """Cancel a booking from the admin side and release its slot."""
-    released_slot = booking.slot
-
-    if booking.slot_id is not None:
-        await session.execute(
-            update(Slot).where(Slot.id == booking.slot_id).values(status=SlotStatus.FREE)
+) -> CancelBookingResult:
+    """Atomically cancel a booking from the admin side and release its slot."""
+    expected_status = booking.status
+    expected_slot_id = booking.slot_id
+    if expected_status not in ACTIVE_SLOT_BOOKING_STATUSES:
+        return CancelBookingResult(
+            ok=False,
+            reason="not_active",
+            booking=booking,
+            released_slot=None,
         )
-        if released_slot is not None:
-            released_slot.status = SlotStatus.FREE
+
+    cancel_reason_text = (reason_text or "").strip() or "Отменена Ангелой"
+    transition = await session.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.status == expected_status,
+            Booking.slot_id == expected_slot_id,
+        )
+        .values(
+            status=BookingStatus.CANCELLED_BY_MASTER,
+            cancel_reason_code="other",
+            cancel_reason_text=cancel_reason_text,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return CancelBookingResult(
+            ok=False,
+            reason="booking_changed",
+            booking=booking,
+            released_slot=None,
+        )
+
+    released_slot = None
+    if expected_slot_id is not None:
+        released_slot = await _release_slot_if_unused(
+            session,
+            slot_id=expected_slot_id,
+            loaded_slot=booking.slot,
+        )
 
     booking.status = BookingStatus.CANCELLED_BY_MASTER
     booking.cancel_reason_code = "other"
-    booking.cancel_reason_text = (reason_text or "").strip() or "Отменена Ангелой"
-    await session.flush()
+    booking.cancel_reason_text = cancel_reason_text
     await session.commit()
-    return released_slot
+    return CancelBookingResult(
+        ok=True,
+        reason=None,
+        booking=booking,
+        released_slot=released_slot,
+    )
 
 
-def apply_booking_no_show(
+async def apply_booking_no_show(
+    session: AsyncSession,
     booking: Booking,
     *,
     no_show_strike_limit: int,
     now_utc: datetime | None = None,
-) -> None:
-    """Apply the shared no-show side effects to one confirmed booking."""
+) -> NoShowBookingResult:
+    """Atomically apply no-show side effects to one confirmed booking."""
+    if booking.status != BookingStatus.CONFIRMED:
+        return NoShowBookingResult(
+            ok=False,
+            reason="not_confirmed",
+            booking=booking,
+            released_slot=None,
+            strikes=booking.client.strikes if booking.client is not None else 0,
+            requires_manual_approval=(
+                booking.client.requires_manual_approval
+                if booking.client is not None
+                else False
+            ),
+        )
+
+    expected_slot_id = booking.slot_id
+    transition = await session.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.slot_id == expected_slot_id,
+        )
+        .values(status=BookingStatus.NO_SHOW)
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return NoShowBookingResult(
+            ok=False,
+            reason="booking_changed",
+            booking=booking,
+            released_slot=None,
+            strikes=booking.client.strikes if booking.client is not None else 0,
+            requires_manual_approval=(
+                booking.client.requires_manual_approval
+                if booking.client is not None
+                else False
+            ),
+        )
+
+    strike_threshold = no_show_strike_limit * 2
+    await session.execute(
+        update(User)
+        .where(User.id == booking.client_id)
+        .values(
+            strikes=User.strikes + 2,
+            requires_manual_approval=case(
+                (User.strikes + 2 >= strike_threshold, True),
+                else_=User.requires_manual_approval,
+            ),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    updated_risk = await session.execute(
+        select(User.strikes, User.requires_manual_approval).where(
+            User.id == booking.client_id
+        )
+    )
+    strikes, requires_manual_approval = updated_risk.one()
+
     current_utc = now_utc or datetime.now(UTC)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=UTC)
     booking.status = BookingStatus.NO_SHOW
     if booking.client is not None:
-        booking.client.strikes += 2
-        if booking.client.strikes >= no_show_strike_limit * 2:
-            booking.client.requires_manual_approval = True
-    if booking.slot is not None and booking.slot.start_at > current_utc:
-        booking.slot.status = SlotStatus.FREE
+        booking.client.strikes = int(strikes)
+        booking.client.requires_manual_approval = bool(requires_manual_approval)
+
+    released_slot = None
+    slot_start_at = booking.slot.start_at if booking.slot is not None else None
+    if slot_start_at is not None and slot_start_at.tzinfo is None:
+        slot_start_at = slot_start_at.replace(tzinfo=UTC)
+    if expected_slot_id is not None and slot_start_at is not None and slot_start_at > current_utc:
+        released_slot = await _release_slot_if_unused(
+            session,
+            slot_id=expected_slot_id,
+            loaded_slot=booking.slot,
+        )
+
+    return NoShowBookingResult(
+        ok=True,
+        reason=None,
+        booking=booking,
+        released_slot=released_slot,
+        strikes=int(strikes),
+        requires_manual_approval=bool(requires_manual_approval),
+    )
 
 
 def build_no_show_client_notice(
@@ -1013,6 +1654,21 @@ def build_no_show_client_notice(
 
 
 async def reschedule_booking(
+    session: AsyncSession,
+    *,
+    booking: Booking,
+    new_slot_id: int,
+) -> RescheduleBookingResult:
+    """Serialize and atomically validate one booking reschedule."""
+    async with _booking_transition_lock():
+        return await _reschedule_booking_unlocked(
+            session,
+            booking=booking,
+            new_slot_id=new_slot_id,
+        )
+
+
+async def _reschedule_booking_unlocked(
     session: AsyncSession,
     *,
     booking: Booking,
@@ -1046,6 +1702,22 @@ async def reschedule_booking(
             new_slot=booking.slot,
         )
 
+    duration_min = await current_booking_duration_minutes(
+        session,
+        base_service_id=booking.base_service_id,
+        addon_ids=list(booking.addons or []),
+        require_active=False,
+    )
+    if duration_min is None:
+        return RescheduleBookingResult(
+            ok=False,
+            reason="service_unavailable",
+            booking=booking,
+            old_slot=booking.slot,
+            new_slot=None,
+        )
+
+    current_utc = datetime.now(UTC)
     new_slot = await session.get(Slot, new_slot_id)
     if new_slot is None:
         return RescheduleBookingResult(
@@ -1061,11 +1733,18 @@ async def reschedule_booking(
         .where(
             Slot.id == new_slot_id,
             Slot.status == SlotStatus.FREE,
+            Slot.start_at > current_utc,
+            ~exists(
+                select(Booking.id).where(
+                    Booking.slot_id == new_slot_id,
+                    Booking.status.in_(ACTIVE_SLOT_BOOKING_STATUSES),
+                )
+            ),
         )
         .values(status=SlotStatus.BOOKED)
+        .execution_options(synchronize_session=False)
     )
     if update_result.rowcount != 1:
-        await session.rollback()
         return RescheduleBookingResult(
             ok=False,
             reason="slot_unavailable",
@@ -1074,12 +1753,59 @@ async def reschedule_booking(
             new_slot=new_slot,
         )
 
+    if not await booking_interval_is_available(
+        session,
+        start_at=new_slot.start_at,
+        duration_min=duration_min,
+        exclude_booking_id=booking.id,
+    ):
+        await _release_slot_if_unused(
+            session,
+            slot_id=new_slot_id,
+            loaded_slot=new_slot,
+        )
+        return RescheduleBookingResult(
+            ok=False,
+            reason="time_overlap",
+            booking=booking,
+            old_slot=booking.slot,
+            new_slot=new_slot,
+        )
+
+    expected_old_slot_id = booking.slot_id
     old_slot = booking.slot
-    await session.execute(
-        update(Slot).where(Slot.id == booking.slot_id).values(status=SlotStatus.FREE)
+    transition = await session.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.slot_id == expected_old_slot_id,
+        )
+        .values(
+            slot_id=new_slot_id,
+            reschedules_count=Booking.reschedules_count + 1,
+        )
+        .execution_options(synchronize_session=False)
     )
-    if old_slot is not None:
-        old_slot.status = SlotStatus.FREE
+    if transition.rowcount != 1:
+        await _release_slot_if_unused(
+            session,
+            slot_id=new_slot_id,
+            loaded_slot=new_slot,
+        )
+        return RescheduleBookingResult(
+            ok=False,
+            reason="booking_changed",
+            booking=booking,
+            old_slot=old_slot,
+            new_slot=new_slot,
+        )
+
+    await _release_slot_if_unused(
+        session,
+        slot_id=expected_old_slot_id,
+        loaded_slot=old_slot,
+    )
 
     booking.slot_id = new_slot_id
     booking.slot = new_slot

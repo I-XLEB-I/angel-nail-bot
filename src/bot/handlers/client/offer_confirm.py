@@ -18,6 +18,7 @@ from src.db.models import ApprovalRequestKind, ApprovalRequestStatus, User
 from src.db.repositories.approvals import ApprovalRequestRepository
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.slots import SlotRepository
+from src.services.admin_approvals import reset_approval_offer_to_pending
 from src.services.booking import format_local_datetime
 from src.services.button_configs import load_all_button_configs
 from src.services.notifications import send_text_to_admins
@@ -42,19 +43,6 @@ async def _replace_offer_result_message(
         text,
         reply_markup=build_back_to_menu_keyboard(button_configs=button_configs),
     )
-
-
-async def reset_offered_request_to_pending(
-    *,
-    db_session: AsyncSession,
-    approval,
-) -> None:
-    """Return an offered approval back to the pending queue."""
-    approval.status = ApprovalRequestStatus.PENDING
-    approval.offered_slot_id = None
-    approval.offered_start_at = None
-    approval.resolved_at = None
-    await db_session.commit()
 
 
 @router.callback_query(F.data.startswith("approval:accept_offer:"))
@@ -98,12 +86,17 @@ async def accept_time_offer(
         slot, _ = await slot_repository.create_if_missing(approval.offered_start_at)
         await db_session.commit()
     if slot is None:
-        await reset_offered_request_to_pending(db_session=db_session, approval=approval)
+        reset = await reset_approval_offer_to_pending(
+            approval=approval,
+            db_session=db_session,
+        )
         await _replace_offer_result_message(
             callback,
             db_session=db_session,
             text=texts.APPROVAL_OFFER_EXPIRED_TEXT,
         )
+        if not reset:
+            return
         try:
             await send_text_to_admins(
                     callback.bot,
@@ -126,12 +119,17 @@ async def accept_time_offer(
     )
     if not result.ok:
         if result.reason == "slot_unavailable":
-            await reset_offered_request_to_pending(db_session=db_session, approval=approval)
+            reset = await reset_approval_offer_to_pending(
+                approval=approval,
+                db_session=db_session,
+            )
             await _replace_offer_result_message(
                 callback,
                 db_session=db_session,
                 text=texts.APPROVAL_OFFER_EXPIRED_TEXT,
             )
+            if not reset:
+                return
             try:
                 await send_text_to_admins(
                     callback.bot,
@@ -211,7 +209,17 @@ async def decline_time_offer(
         return
 
     # Reset to pending so admin can offer another time.
-    await reset_offered_request_to_pending(db_session=db_session, approval=approval)
+    reset = await reset_approval_offer_to_pending(
+        approval=approval,
+        db_session=db_session,
+    )
+    if not reset:
+        await _replace_offer_result_message(
+            callback,
+            db_session=db_session,
+            text=texts.APPROVAL_OFFER_EXPIRED_TEXT,
+        )
+        return
 
     # Acknowledge to client.
     await replace_inline_message_text(

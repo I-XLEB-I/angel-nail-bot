@@ -81,7 +81,7 @@ async def show_address(
         ),
         replace_current=True,
         template_key="navigation_public",
-        fallback_title="АДРЕС",
+        fallback_title="Адрес",
         fallback_subtitle="Как добраться до студии",
         parse_mode=ParseMode.HTML,
     )

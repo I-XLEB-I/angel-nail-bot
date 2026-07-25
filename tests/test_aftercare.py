@@ -321,7 +321,11 @@ async def test_back_to_repair_issue_clears_photo_step(monkeypatch) -> None:
         del db_session
         return {}
 
-    monkeypatch.setattr(aftercare_handler, "replace_inline_message_text", fake_replace_inline_message_text)
+    monkeypatch.setattr(
+        aftercare_handler,
+        "replace_inline_message_text",
+        fake_replace_inline_message_text,
+    )
     monkeypatch.setattr(
         aftercare_handler,
         "load_runtime_button_configs",
@@ -363,7 +367,11 @@ async def test_back_to_repair_photos_restores_photo_step(monkeypatch) -> None:
         del db_session
         return {}
 
-    monkeypatch.setattr(aftercare_handler, "replace_inline_message_text", fake_replace_inline_message_text)
+    monkeypatch.setattr(
+        aftercare_handler,
+        "replace_inline_message_text",
+        fake_replace_inline_message_text,
+    )
     monkeypatch.setattr(
         aftercare_handler,
         "load_runtime_button_configs",

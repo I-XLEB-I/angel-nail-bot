@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 
@@ -11,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
 from src.bot.fsm_utils import clear_state_preserving_admin_mode
+from src.bot.keyboards.admin import (
+    build_admin_rescue_slot_keyboard,
+    build_open_client_card_keyboard,
+)
 from src.bot.keyboards.client import (
     build_back_to_booking_keyboard,
     build_booking_action_result_keyboard,
@@ -25,7 +30,6 @@ from src.bot.keyboards.client import (
     build_reschedule_schedule_days_keyboard,
     build_reschedule_times_keyboard,
 )
-from src.bot.keyboards.admin import build_admin_rescue_slot_keyboard, build_open_client_card_keyboard
 from src.bot.slot_picker import (
     order_day_options_by_preference,
     order_slots_by_time_preference,
@@ -56,9 +60,11 @@ from src.services.booking import (
     build_client_booking_card_text,
     build_my_bookings_list_text,
     build_my_bookings_overview_text,
+    calculate_booking_duration,
     can_cancel_booking,
     can_reschedule_booking,
     cancel_booking,
+    filter_slots_without_booking_overlap,
     format_local_datetime,
     group_slots_by_local_day,
     needs_late_cancellation_notice,
@@ -299,7 +305,7 @@ async def show_reschedule_days_message(
 ) -> None:
     """Render the day picker for rescheduling."""
     button_configs = await load_runtime_button_configs(db_session)
-    booking, _ = await load_booking_and_addons(
+    booking, addons = await load_booking_and_addons(
         db_session,
         client_id=user.id,
         booking_id=booking_id,
@@ -329,6 +335,15 @@ async def show_reschedule_days_message(
 
     slot_repository = SlotRepository(db_session)
     slots = await slot_repository.list_free_future(horizon_days=PUBLIC_BOOKING_HORIZON_DAYS)
+    slots = await filter_slots_without_booking_overlap(
+        db_session,
+        slots=slots,
+        duration_min=calculate_booking_duration(
+            base_service=booking.base_service,
+            addons=addons,
+        ),
+        exclude_booking_id=booking.id,
+    )
     day_options = order_day_options_by_preference(
         group_slots_by_local_day(slots, settings.tz),
         user.preferred_days_note,
@@ -397,7 +412,7 @@ async def show_reschedule_times_message(
 ) -> None:
     """Render the time picker for rescheduling."""
     button_configs = await load_runtime_button_configs(db_session)
-    booking, _ = await load_booking_and_addons(
+    booking, addons = await load_booking_and_addons(
         db_session,
         client_id=user.id,
         booking_id=booking_id,
@@ -427,6 +442,15 @@ async def show_reschedule_times_message(
 
     slot_repository = SlotRepository(db_session)
     slots = await slot_repository.list_free_for_local_day(local_day=local_day, tz_name=settings.tz)
+    slots = await filter_slots_without_booking_overlap(
+        db_session,
+        slots=slots,
+        duration_min=calculate_booking_duration(
+            base_service=booking.base_service,
+            addons=addons,
+        ),
+        exclude_booking_id=booking.id,
+    )
     slots = order_slots_by_time_preference(
         slots,
         user.preferred_time_note,
@@ -536,16 +560,41 @@ async def finish_cancellation(
     show_late_notice = needs_late_cancellation_notice(booking)
     hours_before = hours_before_booking(booking)
     event_id = booking.gcal_event_id
-    released_slot = await cancel_booking(
+    cancellation = await cancel_booking(
         db_session,
         booking=booking,
         reason_code=reason_code,
         reason_text=reason_text,
     )
+    if not cancellation.ok:
+        await clear_state_preserving_admin_mode(state)
+        if edit:
+            await show_bookings_list_message(
+                message,
+                db_session=db_session,
+                user=user,
+                settings=settings,
+                edit=True,
+                prefix_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            )
+            return
+        await message.answer(
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+            reply_markup=build_booking_action_result_keyboard(
+                button_configs=button_configs
+            ),
+        )
+        return
+
+    released_slot = cancellation.released_slot
 
     if event_id:
         try:
-            delete_booking_event(settings, event_id=event_id)
+            await asyncio.to_thread(
+                delete_booking_event,
+                settings,
+                event_id=event_id,
+            )
             booking.gcal_event_id = None
             await db_session.commit()
         except Exception:
@@ -898,7 +947,8 @@ async def choose_reschedule_slot(
 
     if booking.gcal_event_id and booking.slot is not None:
         try:
-            update_booking_event(
+            await asyncio.to_thread(
+                update_booking_event,
                 settings,
                 event_id=booking.gcal_event_id,
                 booking=build_calendar_booking_info(
@@ -925,7 +975,10 @@ async def choose_reschedule_slot(
             reply_markup=build_open_client_card_keyboard(user.id),
         )
     except Exception:
-        logger.exception("Failed to notify admins about client reschedule for booking %s", booking.id)
+        logger.exception(
+            "Failed to notify admins about client reschedule for booking %s",
+            booking.id,
+        )
 
     await show_booking_card_message(
         callback.message,

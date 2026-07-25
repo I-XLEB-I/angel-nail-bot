@@ -24,6 +24,7 @@ from src.services.booking import (
     ConfirmBookingResult,
     RescheduleBookingResult,
     confirm_booking,
+    current_booking_pricing_signature,
     format_local_datetime,
     format_local_day_label,
     reschedule_booking,
@@ -239,8 +240,22 @@ async def attempt_booking_with_anti_abuse(
     design_comment: str | None,
     tz_name: str,
     payment_method: str | None = None,
+    expected_pricing_signature: str | None = None,
 ) -> BookingAttemptResult:
     """Apply anti-abuse rules before confirming a booking."""
+    current_pricing_signature = await current_booking_pricing_signature(
+        db_session,
+        base_service_id=base_service_id,
+        addon_ids=addon_ids,
+    )
+    if current_pricing_signature is None:
+        return BookingAttemptResult(outcome="service_unavailable")
+    if (
+        expected_pricing_signature is not None
+        and current_pricing_signature != expected_pricing_signature
+    ):
+        return BookingAttemptResult(outcome="price_changed")
+
     settings = await get_anti_abuse_settings(db_session)
     now = utcnow()
     approvals = ApprovalRequestRepository(db_session)
@@ -252,6 +267,8 @@ async def attempt_booking_with_anti_abuse(
         return BookingAttemptResult(outcome="slot_unavailable")
 
     target_start_at = normalize_start_at(slot.start_at)
+    if target_start_at <= now:
+        return BookingAttemptResult(outcome="slot_unavailable")
 
     if user.is_blocked:
         await record_rate_event(
@@ -426,6 +443,7 @@ async def attempt_booking_with_anti_abuse(
         design_comment=design_comment,
         payment_method=payment_method,
         created_via=BookingCreatedVia.BOT,
+        expected_pricing_signature=expected_pricing_signature,
     )
     await record_rate_event(
         db_session,
@@ -460,6 +478,8 @@ async def attempt_reschedule_with_anti_abuse(
         return RescheduleAttemptResult(outcome="slot_unavailable", reschedule_result=result)
 
     target_start_at = normalize_start_at(slot.start_at)
+    if target_start_at <= now:
+        return RescheduleAttemptResult(outcome="slot_unavailable")
     if user.is_shadow_banned:
         await record_rate_event(
             db_session,

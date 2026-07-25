@@ -17,7 +17,11 @@ RESCUE_SLOT_CANDIDATE_LIMIT = 6
 
 def slot_is_rescuable(slot: Slot) -> bool:
     """Return whether a free future slot can be offered to loyal clients."""
-    start_at = slot.start_at if slot.start_at.tzinfo is not None else slot.start_at.replace(tzinfo=UTC)
+    start_at = (
+        slot.start_at
+        if slot.start_at.tzinfo is not None
+        else slot.start_at.replace(tzinfo=UTC)
+    )
     return slot.status == SlotStatus.FREE and start_at > datetime.now(UTC)
 
 

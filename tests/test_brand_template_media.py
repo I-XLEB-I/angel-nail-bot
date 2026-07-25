@@ -31,6 +31,12 @@ class FakeBot:
         self.photos.append(photo)
 
 
+class FailingPhotoMessage(FakeMessage):
+    async def answer_photo(self, photo, **kwargs) -> None:
+        del photo, kwargs
+        raise RuntimeError("temporary Telegram failure")
+
+
 async def test_named_template_without_media_sends_plain_text(monkeypatch) -> None:
     monkeypatch.setattr(brand, "has_template_media", lambda key: False)
     message = FakeMessage()
@@ -58,3 +64,22 @@ async def test_proactive_named_template_without_media_sends_plain_text(monkeypat
 
     assert bot.texts == ["Напоминание"]
     assert bot.photos == []
+
+
+async def test_named_template_photo_failure_falls_back_to_text(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    image_path = tmp_path / "template.jpg"
+    image_path.write_bytes(b"image")
+    monkeypatch.setattr(brand, "has_template_media", lambda key: True)
+    monkeypatch.setattr(brand, "template_media_path", lambda key: image_path)
+    message = FailingPhotoMessage()
+
+    await brand.send_brand_message(
+        message,
+        caption="Текст останется доступен",
+        template_key="navigation_public",
+    )
+
+    assert message.texts == ["Текст останется доступен"]

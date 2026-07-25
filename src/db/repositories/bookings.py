@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, delete, func, select, update
+from sqlalchemy import Integer, delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -253,11 +253,32 @@ class BookingRepository:
         await self.session.execute(
             delete(ApprovalRequest).where(ApprovalRequest.related_booking_id.in_(booking_ids))
         )
+        await self.session.execute(
+            delete(Booking)
+            .where(Booking.id.in_(booking_ids))
+            .execution_options(synchronize_session="fetch")
+        )
         if slot_ids:
             await self.session.execute(
-                update(Slot).where(Slot.id.in_(slot_ids)).values(status=SlotStatus.FREE)
+                update(Slot)
+                .where(
+                    Slot.id.in_(slot_ids),
+                    Slot.status == SlotStatus.BOOKED,
+                    ~exists(
+                        select(Booking.id).where(
+                            Booking.slot_id == Slot.id,
+                            Booking.status.in_(
+                                [
+                                    BookingStatus.PENDING_MASTER,
+                                    BookingStatus.CONFIRMED,
+                                ]
+                            ),
+                        )
+                    ),
+                )
+                .values(status=SlotStatus.FREE)
+                .execution_options(synchronize_session="fetch")
             )
-        await self.session.execute(delete(Booking).where(Booking.id.in_(booking_ids)))
         await self.session.flush()
         return len(booking_ids)
 
@@ -871,6 +892,20 @@ class BookingRepository:
         )
         return list(result.scalars().unique().all())
 
+    async def mark_completed_if_current(self, *, booking_id: int, slot_id: int) -> bool:
+        """Complete a booking only while it is still confirmed in the same slot."""
+        result = await self.session.execute(
+            update(Booking)
+            .where(
+                Booking.id == booking_id,
+                Booking.status == BookingStatus.CONFIRMED,
+                Booking.slot_id == slot_id,
+            )
+            .values(status=BookingStatus.COMPLETED)
+            .execution_options(synchronize_session="fetch")
+        )
+        return result.rowcount == 1
+
     async def list_for_local_day(self, *, local_day: date, tz_name: str) -> list[Booking]:
         """Return today's bookings sorted by slot time for the morning summary."""
         tz = ZoneInfo(tz_name)
@@ -1015,6 +1050,7 @@ class BookingRepository:
             select(Booking).where(
                 Booking.id == booking_id,
                 Booking.client_id == client_id,
+                Booking.status == BookingStatus.CONFIRMED,
             )
         )
         booking = result.scalar_one_or_none()

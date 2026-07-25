@@ -70,7 +70,10 @@ async def send_rescue_slot_offer(
     _, _, slot_id_str, exclude_user_id_str = callback.data.split(":", 3)
     slot = await SlotRepository(db_session).get_by_id(int(slot_id_str))
     if slot is None or not slot_is_rescuable(slot):
-        await replace_inline_message_text(callback.message, texts.ADMIN_RESCUE_SLOT_UNAVAILABLE_TEXT)
+        await replace_inline_message_text(
+            callback.message,
+            texts.ADMIN_RESCUE_SLOT_UNAVAILABLE_TEXT,
+        )
         return
 
     exclude_user_id = int(exclude_user_id_str)

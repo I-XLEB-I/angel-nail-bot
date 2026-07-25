@@ -53,10 +53,10 @@ class FakeBot:
         self.deletes.append({"chat_id": chat_id, "message_id": message_id})
 
 
-def build_settings() -> Settings:
+def build_settings(*, admin_tg_ids: str = "1") -> Settings:
     return Settings(
         BOT_TOKEN="test-token",
-        ADMIN_TG_IDS="1",
+        ADMIN_TG_IDS=admin_tg_ids,
         TZ="Europe/Moscow",
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
     )
@@ -144,6 +144,55 @@ async def test_send_morning_summary_includes_24h_and_2h_statuses(monkeypatch) ->
             summary_local_date=datetime.now(ZoneInfo(settings.tz)).date(),
         )
         assert len(deliveries) == 1
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_morning_summary_continues_after_one_admin_delivery_fails(
+    monkeypatch,
+) -> None:
+    settings = build_settings(admin_tg_ids="1,2")
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    await seed_today_booking(session_factory, hour=18)
+
+    class PartiallyFailingBot(FakeBot):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts: list[int] = []
+
+        async def send_message(self, chat_id: int, text: str, reply_markup=None):
+            self.attempts.append(chat_id)
+            if chat_id == 1:
+                raise RuntimeError("admin blocked bot")
+            return await super().send_message(chat_id, text, reply_markup)
+
+    bot = PartiallyFailingBot()
+
+    @asynccontextmanager
+    async def fake_session_scope(_settings):
+        async with session_factory() as session:
+            yield session
+
+    monkeypatch.setattr(
+        morning_summary,
+        "session_scope",
+        lambda _settings: fake_session_scope(_settings),
+    )
+
+    await morning_summary.send_morning_summary(bot, settings)
+
+    assert set(bot.attempts) == {1, 2}
+    assert [message["chat_id"] for message in bot.messages] == [2]
+    async with session_factory() as session:
+        delivery = await MorningSummaryDeliveryRepository(session).get_by_admin_tg_id(
+            admin_tg_id=2
+        )
+        assert delivery is not None
 
     await engine.dispose()
 

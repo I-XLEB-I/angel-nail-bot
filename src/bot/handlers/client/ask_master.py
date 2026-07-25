@@ -52,7 +52,7 @@ async def ask_master_entry(
         caption=texts.ASK_MASTER_PROMPT_TEXT,
         reply_markup=build_back_to_menu_keyboard(button_configs=button_configs),
         replace_current=True,
-        fallback_title="ВОПРОС",
+        fallback_title="Вопрос",
         fallback_subtitle="Можно отправить текст, фото или голосовое",
     )
 

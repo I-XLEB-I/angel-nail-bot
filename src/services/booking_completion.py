@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -82,24 +83,26 @@ async def finalize_confirmed_booking(
     event_id: str | None = None
     if sync_calendar:
         try:
-            event_id = create_booking_event(
-                settings,
-                CalendarBookingInfo(
-                    booking_id=booking.id,
-                    start_at=slot.start_at,
-                    duration_min=base_service.duration_min
-                    + sum(addon.duration_min for addon in addons),
-                    base_service_name=base_service.name,
-                    addon_names=[addon.name for addon in addons],
-                    client=CalendarClientInfo(
-                        display_name=user.display_name,
-                        tg_id=user.tg_id,
-                        tg_username=user.tg_username,
-                        phone=user.phone,
-                        note=user.note,
-                    ),
-                    design_comment=booking.design_comment,
+            calendar_booking = CalendarBookingInfo(
+                booking_id=booking.id,
+                start_at=slot.start_at,
+                duration_min=base_service.duration_min
+                + sum(addon.duration_min for addon in addons),
+                base_service_name=base_service.name,
+                addon_names=[addon.name for addon in addons],
+                client=CalendarClientInfo(
+                    display_name=user.display_name,
+                    tg_id=user.tg_id,
+                    tg_username=user.tg_username,
+                    phone=user.phone,
+                    note=user.note,
                 ),
+                design_comment=booking.design_comment,
+            )
+            event_id = await asyncio.to_thread(
+                create_booking_event,
+                settings,
+                calendar_booking,
             )
             if event_id:
                 booking.gcal_event_id = event_id

@@ -16,8 +16,9 @@ from src.bot.keyboards.client import build_back_to_menu_keyboard
 from src.bot.states import AskingMaster, PostvisitFeedback
 from src.bot.ui_utils import replace_inline_message_text
 from src.config import Settings
-from src.db.models import ApprovalRequestKind, User, utcnow
+from src.db.models import ApprovalRequestKind, BookingStatus, User, utcnow
 from src.db.repositories.approvals import ApprovalRequestRepository
+from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.rate_limit_events import RateLimitEventRepository
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
@@ -179,6 +180,18 @@ async def rate_postvisit(
             await replace_inline_message_text(callback.message, texts.POSTVISIT_THANK_YOU_TEXT)
         return
 
+    booking = (
+        await BookingRepository(db_session).get_client_booking(booking_id, user.id)
+        if booking_id is not None
+        else None
+    )
+    if booking is None or booking.status != BookingStatus.COMPLETED:
+        await replace_inline_message_text(
+            callback.message,
+            texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
+
     if score == 5:
         text = await _load_template(
             db_session,
@@ -194,7 +207,7 @@ async def rate_postvisit(
             user=user,
             settings=settings,
             score=score,
-            booking_id=booking_id,
+            booking_id=booking.id,
             bot=callback.bot,
         )
         text = await _load_template(
@@ -206,7 +219,7 @@ async def rate_postvisit(
         await clear_state_preserving_admin_mode(state)
         await state.set_state(PostvisitFeedback.input_text)
         await state.update_data(
-            postvisit_booking_id=booking_id,
+            postvisit_booking_id=booking.id,
             postvisit_score=score,
             postvisit_feedback_approval_id=approval_id,
         )
@@ -218,7 +231,7 @@ async def rate_postvisit(
         user=user,
         settings=settings,
         score=score,
-        booking_id=booking_id,
+        booking_id=booking.id,
         bot=callback.bot,
     )
     text = await _load_template(
@@ -230,7 +243,7 @@ async def rate_postvisit(
     await clear_state_preserving_admin_mode(state)
     await state.set_state(AskingMaster.input_message)
     await state.update_data(
-        postvisit_booking_id=booking_id,
+        postvisit_booking_id=booking.id,
         postvisit_score=score,
         postvisit_feedback_approval_id=approval_id,
     )

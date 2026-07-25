@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -9,10 +10,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+from sqlalchemy import exists, select, update
 
 from src.config import Settings
 from src.db.base import session_scope
-from src.db.models import SlotStatus
+from src.db.models import Booking, BookingStatus, Slot, SlotStatus
 from src.db.repositories.slots import SlotRepository
 from src.services.google_workspace import build_calendar_service
 from src.services.observability import log_event
@@ -334,7 +336,8 @@ async def sync_external_calendar_blocks(bot: Bot, settings: Settings) -> None:
         range_start = future_slots[0].start_at
         range_end = future_slots[-1].start_at + timedelta(days=1)
         try:
-            events = list_calendar_events(
+            events = await asyncio.to_thread(
+                list_calendar_events,
                 settings,
                 time_min=range_start,
                 time_max=range_end,
@@ -348,16 +351,54 @@ async def sync_external_calendar_blocks(bot: Bot, settings: Settings) -> None:
         changed = False
         for slot in future_slots:
             should_block = slot_is_blocked_by_ranges(slot.start_at, block_ranges)
-            if should_block and slot.status == SlotStatus.FREE:
-                slot.status = SlotStatus.BLOCKED
-                slot.blocked_by_gcal = True
-                changed = True
+            if should_block:
+                transition = await session.execute(
+                    update(Slot)
+                    .where(
+                        Slot.id == slot.id,
+                        Slot.start_at == slot.start_at,
+                        Slot.status == SlotStatus.FREE,
+                        ~exists(
+                            select(Booking.id).where(
+                                Booking.slot_id == slot.id,
+                                Booking.status.in_(
+                                    [
+                                        BookingStatus.PENDING_MASTER,
+                                        BookingStatus.CONFIRMED,
+                                    ]
+                                ),
+                            )
+                        ),
+                    )
+                    .values(status=SlotStatus.BLOCKED, blocked_by_gcal=True)
+                    .execution_options(synchronize_session=False)
+                )
+                changed = changed or transition.rowcount == 1
                 continue
 
-            if not should_block and slot.status == SlotStatus.BLOCKED and slot.blocked_by_gcal:
-                slot.status = SlotStatus.FREE
-                slot.blocked_by_gcal = False
-                changed = True
+            transition = await session.execute(
+                update(Slot)
+                .where(
+                    Slot.id == slot.id,
+                    Slot.start_at == slot.start_at,
+                    Slot.status == SlotStatus.BLOCKED,
+                    Slot.blocked_by_gcal.is_(True),
+                    ~exists(
+                        select(Booking.id).where(
+                            Booking.slot_id == slot.id,
+                            Booking.status.in_(
+                                [
+                                    BookingStatus.PENDING_MASTER,
+                                    BookingStatus.CONFIRMED,
+                                ]
+                            ),
+                        )
+                    ),
+                )
+                .values(status=SlotStatus.FREE, blocked_by_gcal=False)
+                .execution_options(synchronize_session=False)
+            )
+            changed = changed or transition.rowcount == 1
 
         if changed:
             await session.commit()

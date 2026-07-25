@@ -88,7 +88,12 @@ async def make_session_scope(session_factory):
         yield session
 
 
-async def create_base_entities(session, *, tg_id: int = 1001, name: str = "Аня") -> tuple[User, Service]:
+async def create_base_entities(
+    session,
+    *,
+    tg_id: int = 1001,
+    name: str = "Аня",
+) -> tuple[User, Service]:
     user = User(
         tg_id=tg_id,
         tg_username=f"user_{tg_id}",
@@ -128,7 +133,11 @@ def legacy_menu_header() -> str:
 
 
 def test_ensure_late_policy_notice_does_not_duplicate_existing_text() -> None:
-    text = "Запись подтверждена.\n\nЕсли опоздание будет больше 15 минут —\nзапись может отмениться 🤍"
+    text = (
+        "Запись подтверждена.\n\n"
+        "Если опоздание будет больше 15 минут —\n"
+        "запись может отмениться 🤍"
+    )
     assert ensure_late_policy_notice(text) == text
 
 
@@ -142,7 +151,10 @@ async def test_repeat_prompt_uses_real_latest_completed_booking() -> None:
     async with session_factory() as session:
         user, service = await create_base_entities(session)
         old_slot = Slot(start_at=datetime.now(UTC) - timedelta(days=100), status=SlotStatus.BOOKED)
-        recent_slot = Slot(start_at=datetime.now(UTC) - timedelta(days=20), status=SlotStatus.BOOKED)
+        recent_slot = Slot(
+            start_at=datetime.now(UTC) - timedelta(days=20),
+            status=SlotStatus.BOOKED,
+        )
         session.add_all([old_slot, recent_slot])
         await session.flush()
         session.add_all(
@@ -660,7 +672,10 @@ async def test_settings_diagnostics_show_effective_template_previews() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        await TemplateRepository(session).upsert(key="greeting_header", content=legacy_menu_header())
+        await TemplateRepository(session).upsert(
+            key="greeting_header",
+            content=legacy_menu_header(),
+        )
         await TemplateRepository(session).upsert(key="portfolio_intro", content="portfolio_intro")
         await TemplateRepository(session).upsert(key="about_master", content="about_master")
         await SettingRepository(session).upsert(key="button_config.one", value="{}")
@@ -736,7 +751,9 @@ def test_created_via_migration_is_idempotent_when_column_already_exists() -> Non
             migration.op = original_op
 
         columns = {column["name"] for column in sa.inspect(connection).get_columns("booking")}
-        value = connection.execute(sa.text("SELECT created_via FROM booking WHERE id = 1")).scalar_one()
+        value = connection.execute(
+            sa.text("SELECT created_via FROM booking WHERE id = 1")
+        ).scalar_one()
 
     assert "created_via" in columns
     assert value == "unknown"
@@ -765,7 +782,9 @@ def test_created_via_migration_adds_column_when_missing() -> None:
             migration.op = original_op
 
         columns = {column["name"] for column in sa.inspect(connection).get_columns("booking")}
-        value = connection.execute(sa.text("SELECT created_via FROM booking WHERE id = 1")).scalar_one()
+        value = connection.execute(
+            sa.text("SELECT created_via FROM booking WHERE id = 1")
+        ).scalar_one()
 
     assert "created_via" in columns
     assert value == "unknown"

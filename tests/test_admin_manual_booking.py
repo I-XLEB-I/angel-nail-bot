@@ -11,6 +11,7 @@ from src.bot.handlers.admin import manual_booking as manual_booking_handler
 from src.config import Settings
 from src.db.base import Base
 from src.db.models import Booking, BookingStatus, Service, ServiceKind, Slot, SlotStatus, User
+from src.db.repositories.users import UserRepository
 from src.services import booking_completion as booking_completion_service
 
 
@@ -34,7 +35,11 @@ class FakeBot:
                 "parse_mode": parse_mode,
             }
         )
-        return type("SentMessage", (), {"chat": type("Chat", (), {"id": chat_id})(), "message_id": 90})()
+        return type(
+            "SentMessage",
+            (),
+            {"chat": type("Chat", (), {"id": chat_id})(), "message_id": 90},
+        )()
 
 
 class FakeMessage:
@@ -101,6 +106,27 @@ def build_base_service() -> Service:
 
 
 @pytest.mark.asyncio
+async def test_same_name_manual_guests_are_distinct_clients() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        repository = UserRepository(session)
+        first_guest = await repository.create_guest("Анна")
+        second_guest = await repository.create_guest("Анна")
+        await session.commit()
+
+        assert first_guest.id != second_guest.id
+        assert first_guest.tg_id != second_guest.tg_id
+        assert first_guest.tg_id < 0
+        assert second_guest.tg_id < 0
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_manual_booking_confirm_sends_unified_client_confirmation(monkeypatch) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -153,7 +179,9 @@ async def test_manual_booking_confirm_sends_unified_client_confirmation(monkeypa
 
         assert callback.message.edits[-1][0] == texts.ADMIN_MANUAL_BOOKING_DONE_TEXT
         assert any(message["chat_id"] == user.tg_id for message in bot.sent_messages)
-        client_message = next(message for message in bot.sent_messages if message["chat_id"] == user.tg_id)
+        client_message = next(
+            message for message in bot.sent_messages if message["chat_id"] == user.tg_id
+        )
         assert client_message["reply_markup"] is not None
         callback_data = [
             button.callback_data

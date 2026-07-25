@@ -53,6 +53,22 @@ class FakeBot:
         return type("SentMessage", (), {"chat": FakeChat(chat_id), "message_id": 100})()
 
 
+class FailingClientBot(FakeBot):
+    def __init__(self, *, client_tg_id: int) -> None:
+        super().__init__()
+        self.client_tg_id = client_tg_id
+
+    async def send_message(self, *, chat_id: int, text: str, reply_markup=None, parse_mode=None):
+        if chat_id == self.client_tg_id:
+            raise RuntimeError("Telegram delivery failed")
+        return await super().send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+
+
 class FakeMessage:
     def __init__(self, *, bot: FakeBot | None = None) -> None:
         self.bot = bot or FakeBot()
@@ -159,6 +175,54 @@ async def test_offer_slot_marks_request_offered_and_sends_client_keyboard() -> N
         assert (
             callback.message.answers[-1][0]
             == approvals_handler.texts.APPROVAL_TIME_OFFER_SENT_ADMIN_TEXT
+        )
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failed_offer_delivery_returns_request_to_pending_queue() -> None:
+    settings = build_settings()
+    engine, session_factory = await setup_session()
+
+    async with session_factory() as session:
+        user = User(tg_id=5015, display_name="Клиентка", is_admin=False, is_blocked=False)
+        service = build_base_service()
+        slot = Slot(start_at=datetime.now(UTC) + timedelta(days=1), status=SlotStatus.FREE)
+        approval = ApprovalRequest(
+            client=user,
+            base_service=service,
+            requested_text="Завтра вечером",
+            kind=ApprovalRequestKind.NEW_BOOKING,
+            status=ApprovalRequestStatus.PENDING,
+            addons=[],
+            design_photos=[],
+        )
+        session.add_all([user, service, slot, approval])
+        await session.commit()
+
+        bot = FailingClientBot(client_tg_id=user.tg_id)
+        callback = FakeCallback(
+            f"approval:offer_slot:{approval.id}:{slot.id}",
+            message=FakeMessage(bot=bot),
+            bot=bot,
+        )
+
+        await approvals_handler.offer_slot_to_client(
+            callback,
+            state=None,
+            db_session=session,
+            is_admin=True,
+            settings=settings,
+        )
+
+        refreshed = await session.get(ApprovalRequest, approval.id)
+        assert refreshed is not None
+        assert refreshed.status == ApprovalRequestStatus.PENDING
+        assert refreshed.offered_slot_id is None
+        assert (
+            callback.message.answers[-1][0]
+            == approvals_handler.texts.APPROVAL_TIME_OFFER_DELIVERY_FAILED_ADMIN_TEXT
         )
 
     await engine.dispose()

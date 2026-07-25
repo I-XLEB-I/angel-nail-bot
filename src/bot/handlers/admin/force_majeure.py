@@ -27,8 +27,8 @@ from src.db.repositories.bookings import BookingRepository
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
 from src.services.force_majeure import (
-    apply_force_majeure_cancellation,
     build_force_majeure_notice,
+    cancel_force_majeure_day,
 )
 from src.services.notifications import send_text_to_user
 from src.services.runtime_settings import get_runtime_tz
@@ -412,18 +412,27 @@ async def force_majeure_final_commit(
         await clear_state_preserving_admin_panel(state)
         return
 
-    for booking in bookings:
-        apply_force_majeure_cancellation(booking, reason=reason)
-
-    await db_session.commit()
-
-    notify_targets_by_id = {booking.id: booking for booking in pending_notice_bookings}
-    for booking in bookings:
-        notify_targets_by_id.setdefault(booking.id, booking)
+    tz_name = await get_runtime_tz(SettingRepository(db_session), settings=settings)
+    await cancel_force_majeure_day(
+        db_session,
+        local_day=local_day,
+        tz_name=tz_name,
+        reason=reason,
+    )
+    notify_targets = await _load_force_majeure_unnotified_bookings(
+        db_session=db_session,
+        settings=settings,
+        local_day=local_day,
+    )
+    notify_target_ids = [booking.id for booking in notify_targets]
 
     cancelled_count = 0
     notice = build_force_majeure_notice(reason)
-    for booking in notify_targets_by_id.values():
+    booking_repository = BookingRepository(db_session)
+    for booking_id in notify_target_ids:
+        booking = await booking_repository.get_by_id(booking_id)
+        if booking is None:
+            continue
         if booking.client is None or booking.force_majeure_notice_sent_at is not None:
             continue
         try:
@@ -447,6 +456,6 @@ async def force_majeure_final_commit(
         callback.message,
         texts.FORCE_MAJEURE_DONE_TEXT.format(
             sent=cancelled_count,
-            total=len(notify_targets_by_id),
+            total=len(notify_target_ids),
         ),
     )

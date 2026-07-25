@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.types import ErrorEvent
 
 from src.bot import texts
+from src.bot.access import AdminOnlyFilter
 from src.bot.fsm_storage import JsonFsmStorage
 from src.bot.handlers.admin.all_bookings import router as admin_all_bookings_router
 from src.bot.handlers.admin.approvals import router as admin_approvals_router
@@ -20,9 +21,10 @@ from src.bot.handlers.admin.force_majeure import router as admin_force_majeure_r
 from src.bot.handlers.admin.late_notices import router as admin_late_notices_router
 from src.bot.handlers.admin.manual_booking import router as admin_manual_booking_router
 from src.bot.handlers.admin.menu import router as admin_menu_router
-from src.bot.handlers.admin.proxy_chat import router as admin_proxy_chat_router
-from src.bot.handlers.admin.rich_test import router as admin_rich_test_router
+from src.bot.handlers.admin.proxy_chat import admin_router as admin_proxy_chat_router
+from src.bot.handlers.admin.proxy_chat import router as client_proxy_chat_router
 from src.bot.handlers.admin.rescue_slots import router as admin_rescue_slots_router
+from src.bot.handlers.admin.rich_test import router as admin_rich_test_router
 from src.bot.handlers.admin.schedule import router as admin_schedule_router
 from src.bot.handlers.admin.services_crud import router as admin_services_router
 from src.bot.handlers.admin.settings_edit import router as admin_settings_router
@@ -74,25 +76,32 @@ def build_application(settings: Settings) -> tuple[Bot, Dispatcher]:
     dispatcher.update.outer_middleware(ThrottleMiddleware())
     dispatcher.include_router(common_router)
     dispatcher.include_router(admin_menu_router)
-    dispatcher.include_router(admin_all_bookings_router)
-    dispatcher.include_router(admin_booking_cards_router)
-    dispatcher.include_router(admin_approvals_router)
-    dispatcher.include_router(admin_stats_router)
-    dispatcher.include_router(admin_broadcast_router)
-    dispatcher.include_router(admin_rich_test_router)
-    dispatcher.include_router(admin_templates_router)
-    dispatcher.include_router(admin_settings_router)
-    dispatcher.include_router(admin_proxy_chat_router)
-    dispatcher.include_router(admin_rescue_slots_router)
-    dispatcher.include_router(admin_schedule_router)
-    dispatcher.include_router(admin_services_router)
-    dispatcher.include_router(admin_clients_router)
-    dispatcher.include_router(admin_button_edit_router)
-    dispatcher.include_router(admin_custom_emoji_router)
-    dispatcher.include_router(admin_unconfirmed_alerts_router)
-    dispatcher.include_router(admin_force_majeure_router)
-    dispatcher.include_router(admin_late_notices_router)
-    dispatcher.include_router(admin_manual_booking_router)
+    admin_only_router = Router(name="admin_only")
+    admin_only_router.message.filter(AdminOnlyFilter())
+    admin_only_router.callback_query.filter(AdminOnlyFilter())
+    admin_only_router.include_routers(
+        admin_all_bookings_router,
+        admin_booking_cards_router,
+        admin_approvals_router,
+        admin_stats_router,
+        admin_broadcast_router,
+        admin_rich_test_router,
+        admin_templates_router,
+        admin_settings_router,
+        admin_proxy_chat_router,
+        admin_rescue_slots_router,
+        admin_schedule_router,
+        admin_services_router,
+        admin_clients_router,
+        admin_button_edit_router,
+        admin_custom_emoji_router,
+        admin_unconfirmed_alerts_router,
+        admin_force_majeure_router,
+        admin_late_notices_router,
+        admin_manual_booking_router,
+    )
+    dispatcher.include_router(admin_only_router)
+    dispatcher.include_router(client_proxy_chat_router)
     dispatcher.include_router(client_menu_router)
     dispatcher.include_router(client_services_router)
     dispatcher.include_router(client_portfolio_router)

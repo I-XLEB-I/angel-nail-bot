@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
@@ -580,7 +581,11 @@ async def delete_bookings_period(
         if not booking.gcal_event_id:
             continue
         try:
-            delete_booking_event(settings, event_id=booking.gcal_event_id)
+            await asyncio.to_thread(
+                delete_booking_event,
+                settings,
+                event_id=booking.gcal_event_id,
+            )
         except Exception:
             logger.exception(
                 "Failed to delete Google Calendar event for bulk-removed booking %s",

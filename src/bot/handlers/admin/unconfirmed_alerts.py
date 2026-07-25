@@ -54,14 +54,26 @@ async def mark_unconfirmed_as_no_show(
         return
 
     anti_abuse_settings = await get_anti_abuse_settings(db_session)
-    apply_booking_no_show(
+    no_show_result = await apply_booking_no_show(
+        db_session,
         booking,
         no_show_strike_limit=anti_abuse_settings["no_show_strike_limit"],
         now_utc=datetime.now(UTC),
     )
-    rescue_slot_id: int | None = None
-    if booking.slot is not None and slot_is_rescuable(booking.slot):
-        rescue_slot_id = booking.slot.id
+    if not no_show_result.ok:
+        if callback.message is not None:
+            await replace_inline_message_text(
+                callback.message,
+                texts.ADMIN_UNCONFIRMED_NO_SHOW_NOT_FOUND_TEXT,
+            )
+        return
+
+    rescue_slot_id = (
+        no_show_result.released_slot.id
+        if no_show_result.released_slot is not None
+        and slot_is_rescuable(no_show_result.released_slot)
+        else None
+    )
     await record_rate_event(
         db_session,
         user_id=booking.client.id,

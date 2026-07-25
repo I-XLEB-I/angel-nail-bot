@@ -1187,14 +1187,32 @@ async def schedule_mark_no_show(
         return
 
     anti_abuse_settings = await get_anti_abuse_settings(db_session)
-    apply_booking_no_show(
+    no_show_result = await apply_booking_no_show(
+        db_session,
         booking,
         no_show_strike_limit=anti_abuse_settings["no_show_strike_limit"],
         now_utc=datetime.now(UTC),
     )
-    rescue_slot_id: int | None = None
-    if booking.slot is not None and slot_is_rescuable(booking.slot):
-        rescue_slot_id = booking.slot.id
+    if not no_show_result.ok:
+        await show_schedule_slot_detail(
+            callback.message,
+            db_session=db_session,
+            settings=settings,
+            slot_id=slot_id,
+            origin_view=origin_view,
+            origin_value=origin_value,
+            state=state,
+            edit=True,
+            notice_text=texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT,
+        )
+        return
+
+    rescue_slot_id = (
+        no_show_result.released_slot.id
+        if no_show_result.released_slot is not None
+        and slot_is_rescuable(no_show_result.released_slot)
+        else None
+    )
     await record_rate_event(
         db_session,
         user_id=booking.client.id,
@@ -1411,6 +1429,19 @@ async def schedule_move_parse_input(
             notice_text=texts.ADMIN_SCHEDULE_MOVE_BOOKED_FORBIDDEN_TEXT,
         )
         return
+    if not result.ok and result.reason == "referenced":
+        await clear_state_preserving_admin_panel(state)
+        await show_schedule_slot_detail(
+            message,
+            db_session=db_session,
+            settings=settings,
+            slot_id=slot_id,
+            origin_view=origin_view,
+            origin_value=origin_value,
+            state=state,
+            notice_text=texts.ADMIN_SCHEDULE_REFERENCED_MUTATION_FORBIDDEN_TEXT,
+        )
+        return
     if result.slot is None:
         await show_schedule_move_prompt(
             message,
@@ -1533,6 +1564,19 @@ async def schedule_delete_slot_confirmed(
             notice_text=texts.ADMIN_SCHEDULE_BOOKED_DELETE_FORBIDDEN_TEXT,
         )
         return
+    if not result.ok and result.reason == "referenced":
+        await show_schedule_slot_detail(
+            callback.message,
+            db_session=db_session,
+            settings=settings,
+            slot_id=slot_id,
+            origin_view=origin_view,
+            origin_value=origin_value,
+            state=state,
+            edit=True,
+            notice_text=texts.ADMIN_SCHEDULE_REFERENCED_MUTATION_FORBIDDEN_TEXT,
+        )
+        return
     await show_schedule_origin_page(
         callback.message,
         db_session=db_session,
@@ -1633,6 +1677,19 @@ async def schedule_unblock_slot(
             state=state,
             edit=True,
             notice_text="Слот уже не существует.",
+        )
+        return
+    if not result.ok and result.reason == "booked":
+        await show_schedule_slot_detail(
+            callback.message,
+            db_session=db_session,
+            settings=settings,
+            slot_id=slot_id,
+            origin_view=origin_view,
+            origin_value=origin_value,
+            state=state,
+            edit=True,
+            notice_text=texts.ADMIN_SCHEDULE_BOOKED_DELETE_FORBIDDEN_TEXT,
         )
         return
     await show_schedule_slot_detail(

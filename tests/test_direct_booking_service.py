@@ -142,8 +142,11 @@ async def test_finalize_direct_booking_attempt_runs_shared_completion(monkeypatc
             has_variable_price=False,
         )
 
+        attempt_calls: list[dict[str, object]] = []
+
         async def fake_attempt(*args, **kwargs):
-            del args, kwargs
+            del args
+            attempt_calls.append(kwargs)
             return BookingAttemptResult(
                 outcome="confirmed",
                 confirm_result=confirm_result,
@@ -182,10 +185,12 @@ async def test_finalize_direct_booking_attempt_runs_shared_completion(monkeypatc
             design_comment=None,
             payment_method="transfer",
             settings=build_settings(),
+            expected_pricing_signature="shown-price",
         )
 
         assert result.attempt.outcome == "confirmed"
         assert result.completion is not None
+        assert attempt_calls[0]["expected_pricing_signature"] == "shown-price"
         assert completion_calls
         assert completion_calls[0]["origin"] == "direct"
         assert completion_calls[0]["sync_calendar"] is True

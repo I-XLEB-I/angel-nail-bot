@@ -370,6 +370,7 @@ def cancel_action_button(
     callback_data: str,
     *,
     button_configs: dict[str, ClientMenuButtonConfig] | None = None,
+    text_override: str | None = None,
 ) -> InlineKeyboardButton:
     """Build the shared editable destructive cancel button."""
     return _build_runtime_callback_button(
@@ -379,7 +380,7 @@ def cancel_action_button(
         fallback_style_name="danger",
         callback_data=callback_data,
         button_configs=button_configs,
-        icon_override=_navigation_icon_custom_emoji_id(button_configs),
+        text_override=text_override,
     )
 
 
@@ -830,10 +831,10 @@ def build_booking_card_keyboard(
         )
     if can_cancel:
         action_row.append(
-            InlineKeyboardButton(
-                text=cancel_label,
-                callback_data=f"my_bookings:cancel:{booking_id}",
-                style=ButtonStyle.DANGER,
+            cancel_action_button(
+                f"my_bookings:cancel:{booking_id}",
+                button_configs=button_configs,
+                text_override=cancel_label if cancel_label != "❌ Отменить" else None,
             )
         )
     if action_row:
@@ -958,10 +959,10 @@ def build_cancel_warning_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="❌ Да, отменить",
-                    callback_data=f"my_bookings:cancel_confirm:{booking_id}",
-                    style=ButtonStyle.DANGER,
+                cancel_action_button(
+                    f"my_bookings:cancel_confirm:{booking_id}",
+                    button_configs=button_configs,
+                    text_override="❌ Да, отменить",
                 )
             ],
             *navigation_rows(

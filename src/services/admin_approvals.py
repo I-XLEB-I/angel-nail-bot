@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot import texts
@@ -69,6 +71,87 @@ class ApprovalSlotResolutionResult:
     client_confirmation: BookingClientConfirmationPayload | None = None
 
 
+@dataclass(slots=True)
+class _ApprovalResolutionClaim:
+    """Original approval fields restored when slot resolution cannot finish."""
+
+    status: ApprovalRequestStatus
+    offered_slot_id: int | None
+    offered_start_at: datetime | None
+    resolved_at: datetime | None
+
+
+async def _claim_approval_resolution(
+    db_session: AsyncSession,
+    approval: ApprovalRequest,
+) -> _ApprovalResolutionClaim | None:
+    """Atomically claim one still-actionable approval for slot resolution."""
+    if approval.status not in {
+        ApprovalRequestStatus.PENDING,
+        ApprovalRequestStatus.OFFERED,
+    }:
+        return None
+
+    original = _ApprovalResolutionClaim(
+        status=approval.status,
+        offered_slot_id=approval.offered_slot_id,
+        offered_start_at=approval.offered_start_at,
+        resolved_at=approval.resolved_at,
+    )
+    claimed_at = utcnow()
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == original.status,
+            ApprovalRequest.offered_slot_id == original.offered_slot_id,
+            ApprovalRequest.offered_start_at == original.offered_start_at,
+        )
+        .values(
+            status=ApprovalRequestStatus.APPROVED,
+            offered_slot_id=None,
+            offered_start_at=None,
+            resolved_at=claimed_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return None
+
+    approval.status = ApprovalRequestStatus.APPROVED
+    approval.offered_slot_id = None
+    approval.offered_start_at = None
+    approval.resolved_at = claimed_at
+    return original
+
+
+async def _restore_approval_resolution(
+    db_session: AsyncSession,
+    approval: ApprovalRequest,
+    original: _ApprovalResolutionClaim,
+) -> None:
+    """Restore a claim when the selected slot could not be resolved."""
+    await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == ApprovalRequestStatus.APPROVED,
+        )
+        .values(
+            status=original.status,
+            offered_slot_id=original.offered_slot_id,
+            offered_start_at=original.offered_start_at,
+            resolved_at=original.resolved_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    approval.status = original.status
+    approval.offered_slot_id = original.offered_slot_id
+    approval.offered_start_at = original.offered_start_at
+    approval.resolved_at = original.resolved_at
+    await db_session.commit()
+
+
 async def load_approval_service_context(
     db_session: AsyncSession,
     approval: ApprovalRequest,
@@ -127,8 +210,33 @@ async def commit_decline_request(
     reason: str,
     db_session: AsyncSession,
     bot,
-) -> None:
-    """Persist one standard decline and notify the client."""
+) -> bool:
+    """Atomically persist one standard decline and notify the client."""
+    if approval.status not in {
+        ApprovalRequestStatus.PENDING,
+        ApprovalRequestStatus.OFFERED,
+    }:
+        return False
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == approval.status,
+            ApprovalRequest.offered_slot_id == approval.offered_slot_id,
+            ApprovalRequest.offered_start_at == approval.offered_start_at,
+        )
+        .values(
+            status=ApprovalRequestStatus.DECLINED,
+            admin_response_text=reason,
+            offered_slot_id=None,
+            offered_start_at=None,
+            resolved_at=utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return False
+
     approval.status = ApprovalRequestStatus.DECLINED
     approval.admin_response_text = reason
     approval.offered_slot_id = None
@@ -140,6 +248,7 @@ async def commit_decline_request(
         chat_id=approval.client.tg_id,
         text=build_client_approval_declined_text(reason),
     )
+    return True
 
 
 async def commit_repair_decline_request(
@@ -147,8 +256,34 @@ async def commit_repair_decline_request(
     approval: ApprovalRequest,
     db_session: AsyncSession,
     bot,
-) -> None:
-    """Persist a repair decline and notify the client with the template copy."""
+) -> bool:
+    """Atomically persist a repair decline and notify the client."""
+    if approval.status not in {
+        ApprovalRequestStatus.PENDING,
+        ApprovalRequestStatus.OFFERED,
+    }:
+        return False
+    resolved_at = utcnow()
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == approval.status,
+            ApprovalRequest.offered_slot_id == approval.offered_slot_id,
+            ApprovalRequest.offered_start_at == approval.offered_start_at,
+        )
+        .values(
+            status=ApprovalRequestStatus.DECLINED,
+            admin_response_text=REPAIR_NOT_WARRANTY_SENTINEL,
+            offered_slot_id=None,
+            offered_start_at=None,
+            resolved_at=resolved_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return False
+
     approval.status = ApprovalRequestStatus.DECLINED
     approval.admin_response_text = REPAIR_NOT_WARRANTY_SENTINEL
     approval.offered_slot_id = None
@@ -164,6 +299,122 @@ async def commit_repair_decline_request(
             values={},
         ),
     )
+    return True
+
+
+async def commit_approval_offer(
+    *,
+    approval: ApprovalRequest,
+    db_session: AsyncSession,
+    offered_slot_id: int | None,
+    offered_start_at: datetime | None,
+) -> bool:
+    """Atomically replace the current pending/offered time proposal."""
+    if approval.status not in {
+        ApprovalRequestStatus.PENDING,
+        ApprovalRequestStatus.OFFERED,
+    }:
+        return False
+    if (offered_slot_id is None) == (offered_start_at is None):
+        raise ValueError("Exactly one offered time source is required")
+
+    original_status = approval.status
+    original_slot_id = approval.offered_slot_id
+    original_start_at = approval.offered_start_at
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == original_status,
+            ApprovalRequest.offered_slot_id == original_slot_id,
+            ApprovalRequest.offered_start_at == original_start_at,
+        )
+        .values(
+            status=ApprovalRequestStatus.OFFERED,
+            offered_slot_id=offered_slot_id,
+            offered_start_at=offered_start_at,
+            resolved_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return False
+
+    approval.status = ApprovalRequestStatus.OFFERED
+    approval.offered_slot_id = offered_slot_id
+    approval.offered_start_at = offered_start_at
+    approval.resolved_at = None
+    await db_session.commit()
+    return True
+
+
+async def reset_approval_offer_to_pending(
+    *,
+    approval: ApprovalRequest,
+    db_session: AsyncSession,
+) -> bool:
+    """Atomically return the current undelivered offer to the pending queue."""
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status == ApprovalRequestStatus.OFFERED,
+            ApprovalRequest.offered_slot_id == approval.offered_slot_id,
+            ApprovalRequest.offered_start_at == approval.offered_start_at,
+        )
+        .values(
+            status=ApprovalRequestStatus.PENDING,
+            offered_slot_id=None,
+            offered_start_at=None,
+            resolved_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return False
+
+    approval.status = ApprovalRequestStatus.PENDING
+    approval.offered_slot_id = None
+    approval.offered_start_at = None
+    approval.resolved_at = None
+    await db_session.commit()
+    return True
+
+
+async def commit_quiet_approval_resolution(
+    *,
+    approval: ApprovalRequest,
+    db_session: AsyncSession,
+    allowed_statuses: tuple[ApprovalRequestStatus, ...],
+    response_text: str,
+) -> bool:
+    """Atomically close an approval without sending a client notification."""
+    resolved_at = utcnow()
+    transition = await db_session.execute(
+        update(ApprovalRequest)
+        .where(
+            ApprovalRequest.id == approval.id,
+            ApprovalRequest.status.in_(allowed_statuses),
+        )
+        .values(
+            status=ApprovalRequestStatus.RESPONDED,
+            admin_response_text=response_text,
+            offered_slot_id=None,
+            offered_start_at=None,
+            resolved_at=resolved_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        return False
+
+    approval.status = ApprovalRequestStatus.RESPONDED
+    approval.admin_response_text = response_text
+    approval.offered_slot_id = None
+    approval.offered_start_at = None
+    approval.resolved_at = resolved_at
+    await db_session.commit()
+    return True
 
 
 async def create_or_get_exact_slot_id(
@@ -226,6 +477,23 @@ async def finalize_approval_with_slot(
     if slot is None:
         return ApprovalSlotResolutionResult(ok=False, reason="slot_unavailable")
 
+    if (
+        approval.kind == ApprovalRequestKind.REPAIR_REQUEST
+        and not is_repair_warranty_marked(approval)
+        and not is_repair_paid_marked(approval)
+    ):
+        return ApprovalSlotResolutionResult(ok=False, reason="confirm_failed")
+    if (
+        approval.kind != ApprovalRequestKind.REPAIR_REQUEST
+        and approval.related_booking is None
+        and (base_service is None or approval.base_service_id is None)
+    ):
+        return ApprovalSlotResolutionResult(ok=False, reason="confirm_failed")
+
+    original_claim = await _claim_approval_resolution(db_session, approval)
+    if original_claim is None:
+        return ApprovalSlotResolutionResult(ok=False, reason="approval_changed")
+
     if approval.kind == ApprovalRequestKind.REPAIR_REQUEST:
         repair_duration = await get_int_setting(
             SettingRepository(db_session),
@@ -243,6 +511,7 @@ async def finalize_approval_with_slot(
                 duration_min=repair_duration,
             )
         else:
+            await _restore_approval_resolution(db_session, approval, original_claim)
             return ApprovalSlotResolutionResult(ok=False, reason="confirm_failed")
 
         result = await confirm_booking(
@@ -255,6 +524,7 @@ async def finalize_approval_with_slot(
             design_comment=approval.design_comment,
             payment_method=approval.payment_method,
             created_via=BookingCreatedVia.BOT,
+            allow_inactive_base_service=True,
         )
         if (
             not result.ok
@@ -262,13 +532,8 @@ async def finalize_approval_with_slot(
             or result.slot is None
             or result.base_service is None
         ):
+            await _restore_approval_resolution(db_session, approval, original_claim)
             return ApprovalSlotResolutionResult(ok=False, reason="slot_unavailable")
-
-        approval.status = ApprovalRequestStatus.APPROVED
-        approval.offered_slot_id = None
-        approval.offered_start_at = None
-        approval.resolved_at = utcnow()
-        await db_session.commit()
 
         completion = await finalize_confirmed_booking(
             db_session,
@@ -292,6 +557,7 @@ async def finalize_approval_with_slot(
 
     if approval.related_booking is None:
         if base_service is None or approval.base_service_id is None:
+            await _restore_approval_resolution(db_session, approval, original_claim)
             return ApprovalSlotResolutionResult(ok=False, reason="confirm_failed")
 
         result = await confirm_booking(
@@ -311,13 +577,8 @@ async def finalize_approval_with_slot(
             or result.slot is None
             or result.base_service is None
         ):
+            await _restore_approval_resolution(db_session, approval, original_claim)
             return ApprovalSlotResolutionResult(ok=False, reason="slot_unavailable")
-
-        approval.status = ApprovalRequestStatus.APPROVED
-        approval.offered_slot_id = None
-        approval.offered_start_at = None
-        approval.resolved_at = utcnow()
-        await db_session.commit()
 
         completion = await finalize_confirmed_booking(
             db_session,
@@ -345,17 +606,13 @@ async def finalize_approval_with_slot(
         new_slot_id=slot.id,
     )
     if not result.ok or result.new_slot is None:
+        await _restore_approval_resolution(db_session, approval, original_claim)
         return ApprovalSlotResolutionResult(ok=False, reason="slot_unavailable")
-
-    approval.status = ApprovalRequestStatus.APPROVED
-    approval.offered_slot_id = None
-    approval.offered_start_at = None
-    approval.resolved_at = utcnow()
-    await db_session.commit()
 
     if approval.related_booking.gcal_event_id:
         try:
-            calendar_event_updater(
+            await asyncio.to_thread(
+                calendar_event_updater,
                 settings,
                 event_id=approval.related_booking.gcal_event_id,
                 booking=build_calendar_booking_info_from_request(

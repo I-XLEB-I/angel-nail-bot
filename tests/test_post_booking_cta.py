@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -9,16 +9,29 @@ from src.bot import texts
 from src.bot.handlers.client import booking_flow
 from src.config import Settings
 from src.db.base import Base
-from src.db.models import User
+from src.db.models import (
+    Booking,
+    BookingStatus,
+    Service,
+    ServiceKind,
+    Slot,
+    SlotStatus,
+    User,
+)
+from src.db.repositories.bookings import BookingRepository
 
 
 class FakeMessage:
     def __init__(self) -> None:
         self.answers: list[tuple[str, object | None]] = []
+        self.edits: list[tuple[str, object | None]] = []
         self.deleted = 0
 
     async def answer(self, text: str, reply_markup=None) -> None:
         self.answers.append((text, reply_markup))
+
+    async def edit_text(self, text: str, reply_markup=None) -> None:
+        self.edits.append((text, reply_markup))
 
     async def delete(self) -> None:
         self.deleted += 1
@@ -39,9 +52,13 @@ class FakeState:
     async def update_data(self, **kwargs: object) -> None:
         self.data.update(kwargs)
 
+    async def set_state(self, state) -> None:
+        self.data["state"] = state
+
 
 class FakeCallback:
-    def __init__(self) -> None:
+    def __init__(self, data: str | None = None) -> None:
+        self.data = data
         self.message = FakeMessage()
         self.answered = False
 
@@ -96,6 +113,107 @@ async def test_booking_success_message_has_post_booking_cta() -> None:
         assert "client:to_menu" in callback_data
         assert texts.POST_BOOKING_MY_BOOKINGS_BUTTON_TEXT in button_texts
         assert texts.POST_BOOKING_MENU_BUTTON_TEXT in button_texts
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_post_reference_entry_rejects_another_clients_booking() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        owner = User(tg_id=1101, display_name="Владелица")
+        stranger = User(tg_id=1102, display_name="Другая клиентка")
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) + timedelta(days=1),
+            status=SlotStatus.BOOKED,
+        )
+        booking = Booking(
+            client=owner,
+            slot=slot,
+            base_service=service,
+            addons=[],
+            design_photos=[],
+            fixed_price=2400,
+            has_variable_price=False,
+            status=BookingStatus.CONFIRMED,
+        )
+        session.add_all([owner, stranger, service, slot, booking])
+        await session.commit()
+
+        callback = FakeCallback(f"client:post_reference:{booking.id}")
+        state = FakeState()
+        await booking_flow.post_reference_start(
+            callback,
+            state,
+            db_session=session,
+            user=stranger,
+        )
+
+        assert callback.answered is True
+        assert callback.message.edits[-1][0] == texts.MY_BOOKINGS_ACTION_UNAVAILABLE_TEXT
+        assert "state" not in state.data
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_post_reference_repository_rejects_inactive_booking() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        user = User(tg_id=1103, display_name="Клиентка")
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        slot = Slot(
+            start_at=datetime.now(UTC) - timedelta(days=1),
+            status=SlotStatus.BOOKED,
+        )
+        booking = Booking(
+            client=user,
+            slot=slot,
+            base_service=service,
+            addons=[],
+            design_photos=[],
+            fixed_price=2400,
+            has_variable_price=False,
+            status=BookingStatus.COMPLETED,
+        )
+        session.add_all([user, service, slot, booking])
+        await session.commit()
+
+        updated = await BookingRepository(session).attach_design_photos(
+            booking.id,
+            user.id,
+            ["photo-id"],
+            "Комментарий",
+        )
+
+        assert updated is False
+        assert booking.design_photos == []
+        assert booking.design_comment is None
 
     await engine.dispose()
 

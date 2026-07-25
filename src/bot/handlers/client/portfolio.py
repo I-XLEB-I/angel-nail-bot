@@ -75,6 +75,6 @@ async def show_portfolio(
         ),
         replace_current=True,
         template_key="about_master",
-        fallback_title="О АНГЕЛЕ И РАБОТЫ",
+        fallback_title="Об Ангеле и работы",
         fallback_subtitle="Знакомство с мастером и свежие работы",
     )

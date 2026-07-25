@@ -1,17 +1,12 @@
 #!/bin/sh
 set -eu
 
-# Seed only on a brand-new database (first deploy); never touches existing data.
-DB_FILE="${DB_FILE:-./data/bot.db}"
-FIRST_RUN=0
-if [ ! -f "$DB_FILE" ]; then
-  FIRST_RUN=1
-fi
-mkdir -p "$(dirname "$DB_FILE")"
+# Seed only on the database file actually configured for the app.
+FIRST_RUN="$(python -m src.db.startup)"
 
 alembic upgrade head
 
-if [ "$FIRST_RUN" -eq 1 ]; then
+if [ "$FIRST_RUN" = "1" ]; then
   python scripts/seed.py
 fi
 

@@ -14,6 +14,21 @@ class ThrottleMiddleware(BaseMiddleware):
     def __init__(self, min_interval_seconds: float = 0.35) -> None:
         self.min_interval_seconds = min_interval_seconds
         self._last_seen: dict[tuple[int, str], float] = {}
+        self._events_since_cleanup = 0
+
+    def _prune_stale_entries(self, now: float) -> None:
+        """Bound memory while retaining every entry that can still be throttled."""
+        self._events_since_cleanup += 1
+        if self._events_since_cleanup < 1000:
+            return
+
+        cutoff = now - max(1.0, self.min_interval_seconds * 4)
+        self._last_seen = {
+            key: seen_at
+            for key, seen_at in self._last_seen.items()
+            if seen_at >= cutoff
+        }
+        self._events_since_cleanup = 0
 
     async def __call__(
         self,
@@ -27,6 +42,7 @@ class ThrottleMiddleware(BaseMiddleware):
 
         event_key = (from_user.id, type(event).__name__)
         now = monotonic()
+        self._prune_stale_entries(now)
         last_seen = self._last_seen.get(event_key)
         self._last_seen[event_key] = now
 

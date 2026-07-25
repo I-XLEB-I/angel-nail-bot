@@ -20,7 +20,7 @@ from src.db.repositories.reminder_admin_alert_deliveries import (
 )
 from src.db.repositories.settings import SettingRepository
 from src.db.repositories.templates import TemplateRepository
-from src.services import reminders
+from src.services import morning_summary, reminders
 
 
 class FakeBot:
@@ -193,6 +193,113 @@ async def test_send_due_reminders_marks_24h_sent(monkeypatch) -> None:
         booking = await session.get(Booking, booking_id)
         assert booking is not None
         assert booking.reminder_24h_sent_at is not None
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_send_due_reminders_continues_after_one_delivery_failure(
+    monkeypatch,
+) -> None:
+    settings = build_settings()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    start_at = datetime.now(UTC) + timedelta(hours=24)
+    async with session_factory() as session:
+        service = Service(
+            name="Маникюр",
+            price=2400,
+            price_variable=False,
+            duration_min=120,
+            kind=ServiceKind.BASE,
+            is_active=True,
+            display_order=10,
+        )
+        first_user = User(
+            tg_id=5101,
+            display_name="Первая",
+            is_admin=False,
+            is_blocked=False,
+        )
+        second_user = User(
+            tg_id=5102,
+            display_name="Вторая",
+            is_admin=False,
+            is_blocked=False,
+        )
+        first_booking = Booking(
+            client=first_user,
+            slot=Slot(start_at=start_at, status=SlotStatus.BOOKED),
+            base_service=service,
+            addons=[],
+            design_photos=[],
+            fixed_price=2400,
+            has_variable_price=False,
+            status=BookingStatus.CONFIRMED,
+        )
+        second_booking = Booking(
+            client=second_user,
+            slot=Slot(
+                start_at=start_at + timedelta(minutes=1),
+                status=SlotStatus.BOOKED,
+            ),
+            base_service=service,
+            addons=[],
+            design_photos=[],
+            fixed_price=2400,
+            has_variable_price=False,
+            status=BookingStatus.CONFIRMED,
+        )
+        session.add_all(
+            [
+                service,
+                first_user,
+                second_user,
+                first_booking,
+                second_booking,
+            ]
+        )
+        await session.commit()
+        first_booking_id = first_booking.id
+        second_booking_id = second_booking.id
+
+    monkeypatch.setattr(
+        reminders,
+        "session_scope",
+        lambda _settings: make_session_scope(session_factory),
+    )
+
+    async def fake_build_address_text(_session) -> str:
+        return "Адрес"
+
+    delivered_to: list[int] = []
+
+    async def flaky_send_brand_bot_message(*, chat_id: int, **kwargs) -> None:
+        del kwargs
+        if chat_id == first_user.tg_id:
+            raise RuntimeError("simulated Telegram failure")
+        delivered_to.append(chat_id)
+
+    monkeypatch.setattr(reminders, "build_address_text", fake_build_address_text)
+    monkeypatch.setattr(
+        reminders,
+        "send_brand_bot_message",
+        flaky_send_brand_bot_message,
+    )
+
+    await reminders.send_due_reminders(FakeBot(), settings)
+
+    async with session_factory() as session:
+        first = await session.get(Booking, first_booking_id)
+        second = await session.get(Booking, second_booking_id)
+        assert first is not None
+        assert first.reminder_24h_sent_at is None
+        assert second is not None
+        assert second.reminder_24h_sent_at is not None
+        assert delivered_to == [second_user.tg_id]
 
     await engine.dispose()
 
@@ -1124,7 +1231,20 @@ async def test_confirm_reminder_2h_updates_admin_alert_message_live(monkeypatch)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
-    now = datetime.now(UTC)
+    now = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return now.replace(tzinfo=None)
+            return now.astimezone(tz)
+
+    # Keep the booking and the live summary on one deterministic Moscow day.
+    monkeypatch.setattr(reminders, "datetime", FrozenDateTime)
+    monkeypatch.setattr(morning_summary, "datetime", FrozenDateTime)
+    monkeypatch.setattr(reminders_handler, "utcnow", lambda: now)
+
     booking_id = await seed_booking(
         session_factory,
         start_at=now + timedelta(hours=1, minutes=30),
@@ -1139,7 +1259,7 @@ async def test_confirm_reminder_2h_updates_admin_alert_message_live(monkeypatch)
         reminders, "session_scope", lambda _settings: make_session_scope(session_factory)
     )
     admin_bot = FakeBot()
-    local_today = datetime.now(ZoneInfo(settings.tz)).date()
+    local_today = now.astimezone(ZoneInfo(settings.tz)).date()
     await reminders.send_unconfirmed_alerts(admin_bot, settings)
     assert len(admin_bot.messages) == 1
 
