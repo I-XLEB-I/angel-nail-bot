@@ -99,18 +99,29 @@ def draw_brand_wordmark(
     top: int,
     size: int = 68,
     subtitle_size: int = 24,
+    main_fill: tuple[int, int, int] = INK,
+    subtitle_fill: tuple[int, int, int] = INK_SOFT,
 ) -> int:
     """Draw the ANGELS / NAIL SPACE wordmark and return the y below it."""
     main_font = load_font(FONT_SERIF_CANDIDATES, size)
     sub_font = load_font(FONT_SANS_CANDIDATES, subtitle_size)
     main_text = "ANGELS"
-    main_w, main_h = text_size(draw, main_text, main_font)
-    draw.text((center_x - main_w // 2, top), main_text, fill=INK, font=main_font)
+    main_bbox = draw.textbbox((0, 0), main_text, font=main_font)
+    main_w = main_bbox[2] - main_bbox[0]
+    main_h = main_bbox[3] - main_bbox[1]
+    main_x = center_x - main_w // 2 - main_bbox[0]
+    main_y = top - main_bbox[1]
+    draw.text((main_x, main_y), main_text, fill=main_fill, font=main_font)
+
     sub_text = "NAIL SPACE"
-    sub_w, sub_h = text_size(draw, sub_text, sub_font)
-    sub_y = top + main_h + 12
-    draw.text((center_x - sub_w // 2, sub_y), sub_text, fill=INK_SOFT, font=sub_font)
-    return sub_y + sub_h
+    sub_bbox = draw.textbbox((0, 0), sub_text, font=sub_font)
+    sub_w = sub_bbox[2] - sub_bbox[0]
+    sub_h = sub_bbox[3] - sub_bbox[1]
+    sub_top = top + main_h + max(16, subtitle_size // 2)
+    sub_x = center_x - sub_w // 2 - sub_bbox[0]
+    sub_y = sub_top - sub_bbox[1]
+    draw.text((sub_x, sub_y), sub_text, fill=subtitle_fill, font=sub_font)
+    return sub_top + sub_h
 
 
 def draw_divider(

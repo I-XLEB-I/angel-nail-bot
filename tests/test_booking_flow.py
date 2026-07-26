@@ -40,6 +40,7 @@ def test_addons_prompt_heading_uses_sentence_case() -> None:
 
     assert text.startswith("💅 Дополнительные опции")
     assert "ДОПОЛНИТЕЛЬНЫЕ ОПЦИИ" not in text
+    assert "Цена указана на каждой кнопке" in text
 
 
 def test_my_bookings_heading_uses_sentence_case() -> None:
@@ -145,6 +146,35 @@ def test_booking_summary_marks_variable_base_service_price() -> None:
     )
 
     assert "3000₽ + доп." in text
+
+
+def test_booking_summary_does_not_show_zero_for_variable_service() -> None:
+    base_service = Service(
+        name="Сложный дизайн",
+        price=0,
+        price_variable=True,
+        duration_min=150,
+        kind=ServiceKind.BASE,
+        is_active=True,
+        display_order=10,
+    )
+    slot = Slot(
+        start_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        status=SlotStatus.FREE,
+    )
+
+    text = build_booking_summary_text(
+        base_service=base_service,
+        addons=[],
+        slot=slot,
+        tz_name="Europe/Moscow",
+        design_photo_count=0,
+        design_comment=None,
+        payment_method=None,
+    )
+
+    assert "Сложный дизайн — обговаривается на месте" in text
+    assert "Сложный дизайн — 0₽" not in text
 
 
 @pytest.mark.asyncio

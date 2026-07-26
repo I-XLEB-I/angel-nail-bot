@@ -119,17 +119,19 @@ async def seed_booking(
     *,
     start_at: datetime,
     status: BookingStatus = BookingStatus.CONFIRMED,
+    display_name: str = "Аня",
+    service_name: str = "Маникюр",
 ) -> int:
     async with session_factory() as session:
         user = User(
             tg_id=5001,
-            display_name="Аня",
+            display_name=display_name,
             phone="+79991234567",
             is_admin=False,
             is_blocked=False,
         )
         service = Service(
-            name="Маникюр",
+            name=service_name,
             price=2400,
             price_variable=False,
             duration_min=120,
@@ -335,6 +337,39 @@ async def test_build_24h_reminder_text_does_not_append_late_policy() -> None:
 
     assert "15 минут" not in text
     assert "запись может отмениться" not in text.lower()
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_html_reminders_escape_client_and_service_values() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    booking_id = await seed_booking(
+        session_factory,
+        start_at=datetime.now(UTC) + timedelta(hours=24),
+        display_name="<Аня & Маша>",
+        service_name="Маникюр <SPA>",
+    )
+
+    async with session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        assert booking is not None
+
+        text = await reminders.build_24h_reminder_text(
+            booking,
+            template_repository=TemplateRepository(session),
+            address_text="<a href='https://example.com'>Маршрут</a>",
+            address_copy_text="Вход <со двора>",
+            tz_name="Europe/Moscow",
+        )
+
+    assert "&lt;Аня &amp; Маша&gt;" in text
+    assert "Маникюр &lt;SPA&gt;" in text
+    assert "Вход &lt;со двора&gt;" in text
 
     await engine.dispose()
 
@@ -1291,9 +1326,7 @@ async def test_confirm_reminder_2h_updates_admin_alert_message_live(monkeypatch)
         refreshed = await session.get(Booking, booking_id)
         assert refreshed is not None
         assert refreshed.reminder_2h_confirmed_at is not None
-        deliveries = await ReminderAdminAlertDeliveryRepository(
-            session
-        ).list_open_by_booking_kind(
+        deliveries = await ReminderAdminAlertDeliveryRepository(session).list_open_by_booking_kind(
             booking_id=booking_id,
             reminder_kind="2h",
         )

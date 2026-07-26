@@ -17,6 +17,7 @@ from src.services.admin_defaults import (
 )
 from src.services.template_sanitizer import (
     LEGACY_ADDRESS_PUBLIC_WITH_INLINE_MAP,
+    LEGACY_VERBOSE_GREETING_HEADER,
     normalize_template_content,
 )
 
@@ -59,6 +60,21 @@ def test_legacy_menu_header_is_normalized_to_current_copy() -> None:
 
 Выбирай раздел ниже 👇"""
     assert menu_handler.normalize_menu_header_text(raw) == texts.MENU_HEADER
+
+
+def test_previous_verbose_menu_header_is_normalized_to_concise_copy() -> None:
+    assert (
+        menu_handler.normalize_menu_header_text(LEGACY_VERBOSE_GREETING_HEADER) == texts.MENU_HEADER
+    )
+
+
+def test_menu_personalization_never_infers_lapsed_status() -> None:
+    user = type("UserStub", (), {"display_name": "Матвей"})()
+
+    rendered = menu_handler.personalize_menu_header_text(texts.MENU_HEADER, user)
+
+    assert rendered == "🌸 Привет, Матвей!\n\nЧто хочешь сделать?"
+    assert "давно" not in rendered.lower()
 
 
 def test_legacy_address_map_link_is_replaced_by_button_only_copy() -> None:

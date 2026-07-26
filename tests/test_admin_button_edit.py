@@ -467,7 +467,7 @@ async def test_save_button_text_rejects_too_long_value() -> None:
             SettingRepository(session),
             editor_id="client_main_menu.portfolio",
         )
-        assert config.text == "🌸 О Ангеле и работы"
+        assert config.text == "🌸 Об Ангеле и работы"
         assert message.answers[-1] == "Кнопка получится слишком длинной. Оставь до 40 символов 🤍"
 
     await engine.dispose()

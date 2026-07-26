@@ -123,6 +123,7 @@ BOOKING_SCHEDULE_PAGE_STATE_KEY = "slot_picker_booking_page"
 CUSTOM_TIME_BACK_TARGET_DAY = "day"
 CUSTOM_TIME_BACK_TARGET_TIME = "time"
 
+
 async def send_phone_prompt(message: Message) -> None:
     """Prompt the client to share or type a phone number."""
     await message.answer(
@@ -469,6 +470,15 @@ async def show_addons_step(
     addons = await repository.list_active(kind=ServiceKind.ADDON)
     data = await state.get_data()
     selected_addons = list(data.get("selected_addons", []))
+    if not addons:
+        await state.update_data(selected_addons=[])
+        await show_payment_step(
+            message,
+            db_session=db_session,
+            state=state,
+            replace=replace,
+        )
+        return
     await state.set_state(BookingStates.choose_addons)
     prompt_text = build_addons_prompt_text(addons, selected_addons)
     reply_markup = build_addons_keyboard(
@@ -1019,10 +1029,7 @@ async def show_confirm_step(
         or base_service.kind != ServiceKind.BASE
         or not base_service.is_active
         or len(addons) != len(selected_addon_ids)
-        or any(
-            addon.kind != ServiceKind.ADDON or not addon.is_active
-            for addon in addons
-        )
+        or any(addon.kind != ServiceKind.ADDON or not addon.is_active for addon in addons)
     )
     if service_selection_unavailable:
         await show_base_service_step(

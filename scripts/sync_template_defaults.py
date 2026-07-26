@@ -17,6 +17,7 @@ from src.services.admin_defaults import required_template_defaults
 # Fingerprints of the defaults that were deployed before the client-copy refresh.
 # A row is updated only when its current content still matches one of these exact values.
 OLD_DEFAULT_SHA256 = {
+    "greeting_header": "025bd88ae178c1cbb4b5d0495f88b881462011d6f6b89a993af2b5ae0f7fdbcf",
     "portfolio_intro": "3bd9c8c0ac8a3a9a1f2b2a3f6c818198b0170c8cbe6fc4efc615c2543572b4a1",
     "navigation_public": "3b7457118d94262ec5554ead5dbc251e0de1540bf2dc49ae8f922f98b7d060bf",
     "navigation": "33fa9199b64eb11557e2c02ab9f0375857c5d95ca177e40f55b8bc60bae935c6",
@@ -28,12 +29,8 @@ OLD_DEFAULT_SHA256 = {
     "reminder_2h": "d70b2c00363e9a67ca6150280a6801bc0212b9ca914acd2b39d319df8ac9169f",
     "late_notice_intro": "b5cef661940cc63e74cf03402fd54aa49f0bc0ddec1ec16c48ef14657d1fdf11",
     "repair_intro": "d2da26ca637f7292b1f00013bfa642779e8b1359661cab61fea2b7e1abfe8559",
-    "repair_request_received": (
-        "774082af59affb249c90d8371f492e0452cbe7621fdf3cdc89b64dddf262de56"
-    ),
-    "repair_warranty_offer": (
-        "988db5088bd0d5ad4190cb4fdf1a5c320a4d3139d08a40df3aa882b433a5057f"
-    ),
+    "repair_request_received": ("774082af59affb249c90d8371f492e0452cbe7621fdf3cdc89b64dddf262de56"),
+    "repair_warranty_offer": ("988db5088bd0d5ad4190cb4fdf1a5c320a4d3139d08a40df3aa882b433a5057f"),
     "price": "a3c80d4c8679a46bf9a0d0b3a71647071f80beec750ad7fc2d8c81e6f9b08b42",
 }
 
@@ -136,10 +133,7 @@ async def sync_templates(*, settings: Settings, apply: bool) -> int:
             await session.rollback()
 
     mode = "applied" if apply else "dry-run"
-    print(
-        f"Summary ({mode}): updates={updated}, customized={customized}, "
-        f"unchanged={unchanged}"
-    )
+    print(f"Summary ({mode}): updates={updated}, customized={customized}, unchanged={unchanged}")
     return updated
 
 

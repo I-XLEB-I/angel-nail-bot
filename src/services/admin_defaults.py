@@ -287,7 +287,8 @@ TEMPLATE_DEFINITIONS: tuple[TemplateDefinition, ...] = (
         description="Текст и картинка главной страницы клиентки",
         category_key="other",
         default_content=texts.MENU_HEADER,
-        variables=(),
+        variables=("display_name",),
+        required_variables=(),
         supports_media=True,
     ),
     TemplateDefinition(

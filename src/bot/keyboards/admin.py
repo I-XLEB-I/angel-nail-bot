@@ -2565,6 +2565,18 @@ def build_admin_rich_comparison_keyboard(
             ("📅 Записаться", ButtonStyle.SUCCESS),
             ("🏠 Главное меню", ButtonStyle.DANGER),
         ),
+        "loyalty_stamps": (
+            ("📅 Записаться", ButtonStyle.SUCCESS),
+            ("🤍 Как это работает", ButtonStyle.PRIMARY),
+        ),
+        "loyalty_card": (
+            ("📅 Записаться", ButtonStyle.SUCCESS),
+            ("🤍 Как это работает", ButtonStyle.PRIMARY),
+        ),
+        "loyalty_minimal": (
+            ("📅 Записаться", ButtonStyle.SUCCESS),
+            ("🤍 Как это работает", ButtonStyle.PRIMARY),
+        ),
         "about": (
             ("📸 Открыть канал", ButtonStyle.PRIMARY),
             ("🏠 Главное меню", ButtonStyle.DANGER),

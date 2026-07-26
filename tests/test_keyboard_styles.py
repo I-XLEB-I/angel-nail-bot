@@ -50,7 +50,6 @@ from src.db.models import ApprovalRequestKind, Service, ServiceKind, Slot, SlotS
 from src.services.admin_defaults import list_template_categories, list_template_definitions
 from src.services.booking import DayOption
 from src.services.button_configs import (
-    DEFAULT_PORTFOLIO_CHANNEL_URL,
     NAVIGATION_CUSTOM_EMOJI_ID,
     ClientMenuButtonConfig,
 )
@@ -68,10 +67,8 @@ def test_client_main_menu_marks_booking_cta_as_success() -> None:
     assert keyboard.inline_keyboard[0][0].callback_data == "client_menu:book"
     assert keyboard.inline_keyboard[0][1].style == ButtonStyle.PRIMARY
     assert keyboard.inline_keyboard[1][0].style == ButtonStyle.PRIMARY
-    assert buttons[DEFAULT_PORTFOLIO_CHANNEL_URL].icon_custom_emoji_id == (
-        PORTFOLIO_CUSTOM_EMOJI_ID
-    )
-    assert buttons[DEFAULT_PORTFOLIO_CHANNEL_URL].callback_data is None
+    assert buttons["client_menu:portfolio"].icon_custom_emoji_id == (PORTFOLIO_CUSTOM_EMOJI_ID)
+    assert buttons["client_menu:portfolio"].url is None
     assert "client_menu:about" not in buttons
     assert buttons[ANGELA_CHAT_URL].url == ANGELA_CHAT_URL
 
@@ -92,7 +89,7 @@ def test_client_main_menu_accepts_runtime_button_overrides() -> None:
         button
         for row in keyboard.inline_keyboard
         for button in row
-        if button.url == DEFAULT_PORTFOLIO_CHANNEL_URL
+        if button.callback_data == "client_menu:portfolio"
     )
 
     assert keyboard.inline_keyboard[0][0].text == "✨ Хочу записаться"
@@ -464,6 +461,7 @@ def test_addons_keyboard_marks_toggle_buttons_as_primary() -> None:
     )
 
     assert keyboard.inline_keyboard[0][0].style == ButtonStyle.PRIMARY
+    assert keyboard.inline_keyboard[0][0].text == "⬜️ Дизайн · от 250₽"
 
 
 def test_confirm_keyboard_uses_success_and_danger_styles() -> None:
@@ -842,4 +840,4 @@ def test_base_services_cancel_uses_danger_style() -> None:
     assert keyboard.inline_keyboard[-1][0].text == "Главное меню"
     assert keyboard.inline_keyboard[-1][0].callback_data == "booking:cancel"
     assert keyboard.inline_keyboard[0][0].style == ButtonStyle.PRIMARY
-    assert keyboard.inline_keyboard[0][0].text == "Маникюр"
+    assert keyboard.inline_keyboard[0][0].text == "Маникюр · 2400₽"

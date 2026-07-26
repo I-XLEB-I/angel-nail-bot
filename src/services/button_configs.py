@@ -161,12 +161,12 @@ EDITABLE_BUTTON_DEFINITIONS: tuple[EditableButtonDefinition, ...] = (
     EditableButtonDefinition(
         key="portfolio",
         category_key="client_main_menu",
-        title="🌸 О Ангеле и работы",
+        title="🌸 Об Ангеле и работы",
         setting_key="button_config.client_main_menu.portfolio",
-        default_text="🌸 О Ангеле и работы",
+        default_text="🌸 Об Ангеле и работы",
         default_style_name=BUTTON_STYLE_DEFAULT,
         default_icon_custom_emoji_id=PORTFOLIO_CUSTOM_EMOJI_ID,
-        url=DEFAULT_PORTFOLIO_CHANNEL_URL,
+        callback_data="client_menu:portfolio",
     ),
     EditableButtonDefinition(
         key="address",

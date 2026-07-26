@@ -700,7 +700,7 @@ async def test_settings_diagnostics_show_effective_template_previews() -> None:
 
         assert "Эффективные шаблоны сейчас:" in text
         assert "greeting_header" in text
-        assert "Привет, я бот Ангелы" in text
+        assert "Привет, {display_name}!" in text
         assert "portfolio_intro" in text
         assert "Работы и настроение" in text
         assert "about_master" in text

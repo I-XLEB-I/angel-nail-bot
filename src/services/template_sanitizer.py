@@ -25,6 +25,20 @@ LEGACY_GREETING_HEADER = """🤍 ANGELS NAIL SPACE
 
 Выбирай раздел ниже 👇"""
 
+LEGACY_VERBOSE_GREETING_HEADER = """🌸 Привет, я бот Ангелы
+
+Помогу записаться, напомню о визите и подскажу, как добраться — спокойно и без лишней суеты.
+
+Что можно здесь:
+
+┣ 📅 Посмотреть окошки и записаться
+┣ 💰 Открыть актуальный прайс
+┣ 📍 Узнать адрес и построить маршрут
+┣ 🌸 Познакомиться с Ангелой и посмотреть работы
+┗ 💬 Написать Ангеле напрямую
+
+Выбирай раздел ниже 👇"""
+
 LEGACY_PORTFOLIO_INTRO = """📸 РАБОТЫ И НАСТРОЕНИЕ
 
 Свежие дизайны и новые работы Ангела выкладывает в Telegram-канале.
@@ -85,7 +99,10 @@ def _normalize_export_prefix(key: str, stripped: str, default: str) -> str | Non
 
 def _normalize_greeting_header(content: str, stripped: str) -> str | None:
     """Return the canonical main-menu greeting when a legacy variant is stored."""
-    if stripped == LEGACY_GREETING_HEADER.strip():
+    if stripped in {
+        LEGACY_GREETING_HEADER.strip(),
+        LEGACY_VERBOSE_GREETING_HEADER.strip(),
+    }:
         return texts.MENU_HEADER
     if (
         "ANGELS NAIL SPACE" in stripped

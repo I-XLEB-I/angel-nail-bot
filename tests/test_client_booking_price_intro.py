@@ -114,3 +114,31 @@ async def test_booking_flow_sends_price_template_before_service_picker() -> None
             assert message.answers[0][1] is not None
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_booking_flow_skips_empty_addons_step() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        message = FakeMessage()
+        state = FakeState()
+
+        await booking_flow.show_addons_step(
+            message,
+            db_session=session,
+            state=state,
+        )
+
+        assert state.state == BookingStates.choose_payment
+        assert state.data["selected_addons"] == []
+        if message.photos:
+            assert message.photos[0]["caption"] == booking_flow.texts.BOOKING_CHOOSE_PAYMENT_TEXT
+        else:
+            assert message.answers[0][0] == booking_flow.texts.BOOKING_CHOOSE_PAYMENT_TEXT
+
+    await engine.dispose()

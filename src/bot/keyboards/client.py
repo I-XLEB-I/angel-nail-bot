@@ -18,6 +18,7 @@ from src.services.booking import (
     PAYMENT_METHOD_TRANSFER,
     DayOption,
     format_local_datetime,
+    format_service_price,
 )
 from src.services.button_configs import (
     ANGELA_CHAT_URL,
@@ -477,7 +478,7 @@ def build_client_main_menu(
                 button_configs.get(
                     "portfolio",
                     ClientMenuButtonConfig(
-                        text="🌸 О Ангеле и работы",
+                        text="🌸 Об Ангеле и работы",
                         style_name="default",
                         icon_custom_emoji_id=PORTFOLIO_CUSTOM_EMOJI_ID,
                     ),
@@ -1610,7 +1611,7 @@ def build_base_services_keyboard(
     rows = [
         [
             InlineKeyboardButton(
-                text=service.name,
+                text=f"{service.name} · {format_service_price(service)}",
                 callback_data=f"booking:base:{service.id}",
                 style=ButtonStyle.PRIMARY,
             )
@@ -1634,7 +1635,7 @@ def build_addons_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{prefix} {addon.name}",
+                    text=f"{prefix} {addon.name} · {format_service_price(addon)}",
                     callback_data=f"booking:addon_toggle:{addon.id}",
                     style=ButtonStyle.PRIMARY,
                 )

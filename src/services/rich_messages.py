@@ -46,6 +46,12 @@ from src.db.repositories.templates import TemplateRepository
 from src.services.admin_defaults import required_template_defaults
 from src.services.booking import format_service_price
 from src.services.image_theme import DEFAULT_ASSETS_DIR
+from src.services.loyalty_card import (
+    LoyaltyCardData,
+    render_loyalty_card_bytes,
+    render_loyalty_minimal_card_bytes,
+    render_loyalty_stamps_card_bytes,
+)
 from src.services.runtime_settings import get_bool_setting
 from src.services.studio_address import load_studio_address_copy_text
 from src.services.template_media import has_template_media, template_media_path
@@ -170,6 +176,14 @@ def _photo_block(path: Path, *, compact: bool = False) -> InputRichBlockPhoto:
     )
 
 
+def _photo_block_from_bytes(content: bytes, *, filename: str) -> InputRichBlockPhoto:
+    return InputRichBlockPhoto(
+        photo=InputMediaPhoto(
+            media=BufferedInputFile(content, filename=filename),
+        )
+    )
+
+
 def _price_table(title: str, services: list) -> InputRichBlockTable:
     cells = [
         [
@@ -278,6 +292,110 @@ def _preview_datetime(settings: Settings) -> tuple[str, str]:
     return local.strftime("%d.%m.%Y"), "14:00"
 
 
+def _loyalty_demo_data(settings: Settings) -> LoyaltyCardData:
+    date_label, time_label = _preview_datetime(settings)
+    return LoyaltyCardData(
+        display_name="Мария",
+        status_label="Постоянная гостья",
+        completed_visits=8,
+        progress_visits=3,
+        target_visits=5,
+        favorite_service="Покрытие гель-лак",
+        next_visit=f"{date_label} · {time_label}",
+    )
+
+
+def _build_loyalty_visual_preview(
+    *,
+    data: LoyaltyCardData,
+    title: str,
+    filename: str,
+    image_bytes: bytes,
+    description: str,
+    recommendation: str,
+) -> RichPreview:
+    standard = (
+        f"<b>{title} · демо</b>\n\n"
+        f"{data.display_name} · {data.status_label.lower()}\n"
+        f"Завершено: {data.completed_visits} визитов\n"
+        f"Текущий цикл: {data.progress_visits} из {data.target_visits}\n"
+        f"Ближайшая запись: {data.next_visit}\n\n"
+        "<i>Это только визуальный концепт. Бонусы клиенткам не начисляются.</i>"
+    )
+    blocks: list[InputRichBlock] = [
+        InputRichBlockSectionHeading(text=title, size=2),
+        _photo_block_from_bytes(image_bytes, filename=filename),
+        InputRichBlockParagraph(
+            text=[
+                RichTextMarked(text=RichTextBold(text=recommendation)),
+                f" · {description}",
+            ]
+        ),
+        InputRichBlockDivider(),
+        InputRichBlockParagraph(
+            text=(
+                "Имя, завершённые визиты, прогресс и ближайшая запись "
+                "будут собираться из базы автоматически."
+            )
+        ),
+        InputRichBlockFooter(
+            text="Клиентки не увидят карту, пока правила программы не будут утверждены."
+        ),
+    ]
+    return RichPreview(standard_text=standard, rich_message=InputRichMessage(blocks=blocks))
+
+
+async def build_rich_loyalty_card_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the detailed loyalty-profile concept without reward accounting."""
+    del db_session
+    data = _loyalty_demo_data(settings)
+    return _build_loyalty_visual_preview(
+        data=data,
+        title="Карта гостьи · профиль",
+        filename="loyalty-profile-demo.png",
+        image_bytes=render_loyalty_card_bytes(data),
+        description="подробный вариант с историей и любимой услугой.",
+        recommendation="Больше информации",
+    )
+
+
+async def build_rich_loyalty_stamps_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the recommended visit-to-gift visual concept."""
+    del db_session
+    data = _loyalty_demo_data(settings)
+    return _build_loyalty_visual_preview(
+        data=data,
+        title="Визиты до подарка",
+        filename="loyalty-stamps-demo.png",
+        image_bytes=render_loyalty_stamps_card_bytes(data),
+        description="один взгляд показывает, сколько осталось до подарка.",
+        recommendation="Рекомендуемая модель",
+    )
+
+
+async def build_rich_loyalty_minimal_preview(
+    db_session: AsyncSession,
+    settings: Settings,
+) -> RichPreview:
+    """Build the compact dark membership-card visual concept."""
+    del db_session
+    data = _loyalty_demo_data(settings)
+    return _build_loyalty_visual_preview(
+        data=data,
+        title="Карта гостьи · минимальная",
+        filename="loyalty-minimal-demo.png",
+        image_bytes=render_loyalty_minimal_card_bytes(data),
+        description="премиальный вариант без второстепенной информации.",
+        recommendation="Самый лаконичный стиль",
+    )
+
+
 async def build_rich_reminder_24h_preview(
     db_session: AsyncSession,
     settings: Settings,
@@ -303,12 +421,8 @@ async def build_rich_reminder_24h_preview(
     standard = render_template_text(template, values).strip()
     blocks: list[InputRichBlock] = [
         InputRichBlockSectionHeading(text="Завтра встречаемся, Мария 🌸", size=2),
-        InputRichBlockParagraph(
-            text=["📅 ", RichTextBold(text=f"{date_label}, в {time_label}")]
-        ),
-        InputRichBlockParagraph(
-            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
-        ),
+        InputRichBlockParagraph(text=["📅 ", RichTextBold(text=f"{date_label}, в {time_label}")]),
+        InputRichBlockParagraph(text=["💅 ", RichTextBold(text="Покрытие гель-лак")]),
         InputRichBlockParagraph(text=f"📍 {address}"),
         InputRichBlockDivider(),
         InputRichBlockParagraph(text="Всё в силе?"),
@@ -339,9 +453,7 @@ async def build_rich_reminder_2h_preview(
             text=["Уже скоро — сегодня в ", RichTextUnderline(text="14:00")],
             size=2,
         ),
-        InputRichBlockParagraph(
-            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
-        ),
+        InputRichBlockParagraph(text=["💅 ", RichTextBold(text="Покрытие гель-лак")]),
         InputRichBlockDivider(),
         InputRichBlockParagraph(
             text="Если задержишься больше чем на 15 минут — запись может отмениться 🤍"
@@ -379,12 +491,8 @@ async def build_rich_booking_confirmation_preview(
     ).strip()
     blocks: list[InputRichBlock] = [
         InputRichBlockSectionHeading(text="Записала тебя ✨", size=2),
-        InputRichBlockParagraph(
-            text=["📅 ", RichTextBold(text=f"{date_label} · {time_label}")]
-        ),
-        InputRichBlockParagraph(
-            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
-        ),
+        InputRichBlockParagraph(text=["📅 ", RichTextBold(text=f"{date_label} · {time_label}")]),
+        InputRichBlockParagraph(text=["💅 ", RichTextBold(text="Покрытие гель-лак")]),
         InputRichBlockParagraph(text=["💳 ", RichTextBold(text="Наличными")]),
         InputRichBlockDivider(),
         InputRichBlockParagraph(text=f"📍 {address}"),
@@ -396,9 +504,7 @@ async def build_rich_booking_confirmation_preview(
         [
             InputRichBlockDivider(),
             InputRichBlockParagraph(text="Напомню за сутки и за 2 часа."),
-            InputRichBlockParagraph(
-                text="Если что-то изменится — открой «Мои записи» в меню 🤍"
-            ),
+            InputRichBlockParagraph(text="Если что-то изменится — открой «Мои записи» в меню 🤍"),
             InputRichBlockParagraph(text="До встречи 🌸"),
         ]
     )
@@ -436,9 +542,7 @@ async def build_rich_calm_style_preview(
                 RichTextMarked(text=RichTextBold(text=time_label)),
             ]
         ),
-        InputRichBlockParagraph(
-            text=["💅 ", RichTextBold(text="Покрытие гель-лак")]
-        ),
+        InputRichBlockParagraph(text=["💅 ", RichTextBold(text="Покрытие гель-лак")]),
         InputRichBlockParagraph(text="💳 Наличными"),
         InputRichBlockDivider(),
         InputRichBlockParagraph(text=["📍 ", RichTextBold(text=address)]),
@@ -478,9 +582,7 @@ async def build_rich_editorial_style_preview(
     blocks.extend(
         [
             InputRichBlockPullQuotation(
-                text=RichTextItalic(
-                    text="Мне важно, чтобы тебе было комфортно на каждом этапе"
-                ),
+                text=RichTextItalic(text="Мне важно, чтобы тебе было комфортно на каждом этапе"),
                 credit="Ангела",
             ),
             InputRichBlockParagraph(
@@ -568,6 +670,21 @@ async def build_rich_functional_style_preview(
 
 RICH_PREVIEW_DEFINITIONS: tuple[RichPreviewDefinition, ...] = (
     RichPreviewDefinition("price", "Прайс", build_rich_price_preview),
+    RichPreviewDefinition(
+        "loyalty_stamps",
+        "Лояльность: визиты до подарка",
+        build_rich_loyalty_stamps_preview,
+    ),
+    RichPreviewDefinition(
+        "loyalty_card",
+        "Лояльность: подробный профиль",
+        build_rich_loyalty_card_preview,
+    ),
+    RichPreviewDefinition(
+        "loyalty_minimal",
+        "Лояльность: минимальная карта",
+        build_rich_loyalty_minimal_preview,
+    ),
     RichPreviewDefinition("about", "Об Ангеле", build_rich_about_preview),
     RichPreviewDefinition("address", "Адрес", build_rich_address_preview),
     RichPreviewDefinition("reminder_24h", "Напоминание за сутки", build_rich_reminder_24h_preview),

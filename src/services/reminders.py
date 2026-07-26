@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from html import escape
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -74,14 +75,14 @@ async def build_24h_reminder_text(
         default_template=texts.DEFAULT_REMINDER_24H_TEMPLATE,
         runtime_template=texts.REMINDER_24H_TEXT,
         values={
-            "name": booking.client.display_name,
+            "name": escape(booking.client.display_name),
             "date": local_dt.strftime("%d.%m.%Y"),
             "time": local_dt.strftime("%H:%M"),
-            "service": booking.base_service.name,
+            "service": escape(booking.base_service.name),
             "address": address_text,
-            "address_short": address_copy_text or build_address_copy_text(),
-            "display_name": booking.client.display_name,
-            "service_name": booking.base_service.name,
+            "address_short": escape(address_copy_text or build_address_copy_text()),
+            "display_name": escape(booking.client.display_name),
+            "service_name": escape(booking.base_service.name),
             "address_text": address_text,
         },
     )
@@ -104,11 +105,11 @@ async def build_2h_reminder_text(
         default_template=texts.DEFAULT_REMINDER_2H_TEMPLATE,
         runtime_template=texts.REMINDER_2H_TEXT,
         values={
-            "name": booking.client.display_name,
+            "name": escape(booking.client.display_name),
             "date": local_dt.strftime("%d.%m.%Y"),
             "time": local_dt.strftime("%H:%M"),
-            "service": booking.base_service.name,
-            "service_name": booking.base_service.name,
+            "service": escape(booking.base_service.name),
+            "service_name": escape(booking.base_service.name),
         },
     )
     return ensure_late_policy_notice(text)
@@ -168,9 +169,7 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
         )
         due_24h_ids = [booking.id for booking in due_24h]
         address_text = await build_address_text(session) if due_24h else ""
-        button_configs_24h = (
-            await load_all_button_configs(settings_repository) if due_24h else None
-        )
+        button_configs_24h = await load_all_button_configs(settings_repository) if due_24h else None
         address_copy_text = (
             await load_studio_address_copy_text(settings_repository) if due_24h else ""
         )
@@ -231,9 +230,7 @@ async def send_due_reminders(bot: Bot, settings: Settings) -> None:
         # already confirmed the visit at the 24h step.
         due_2h = await booking_repository.list_due_2h_reminders(now_utc=now_utc)
         due_2h_ids = [booking.id for booking in due_2h]
-        button_configs = (
-            await load_all_button_configs(settings_repository) if due_2h else None
-        )
+        button_configs = await load_all_button_configs(settings_repository) if due_2h else None
         for booking_id in due_2h_ids:
             booking = await booking_repository.get_by_id(booking_id)
             if (
@@ -396,9 +393,7 @@ async def send_winback_prompts(bot: Bot, settings: Settings) -> None:
             now_utc=now_utc,
             winback_days=winback_days,
         )
-        button_configs = (
-            await load_all_button_configs(settings_repository) if due_users else None
-        )
+        button_configs = await load_all_button_configs(settings_repository) if due_users else None
 
         for user in due_users:
             try:

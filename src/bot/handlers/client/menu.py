@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -21,8 +19,6 @@ from src.services.button_configs import (
 )
 from src.services.template_sanitizer import normalize_template_content
 
-_LAPSED_DAYS = 60
-
 router = Router(name="client_menu")
 
 
@@ -31,22 +27,9 @@ def normalize_menu_header_text(header_text: str) -> str:
     return normalize_template_content("greeting_header", header_text, texts.MENU_HEADER)
 
 
-async def _build_greeting(
-    user: User,
-    *,
-    booking_repository: BookingRepository,
-    base_header: str,
-) -> str:
-    """Prepend a lapsed-client greeting addon when the user hasn't visited in 60+ days."""
-    last_slot_at = await booking_repository.get_last_completed_slot_at(user.id)
-    if last_slot_at is not None:
-        if last_slot_at.tzinfo is None:
-            last_slot_at = last_slot_at.replace(tzinfo=UTC)
-        days_ago = (datetime.now(UTC) - last_slot_at).days
-        if days_ago >= _LAPSED_DAYS:
-            addon = texts.GREETING_LAPSED_ADDON.format(display_name=user.display_name)
-            return addon + base_header
-    return base_header
+def personalize_menu_header_text(header_text: str, user: User) -> str:
+    """Render the optional client name without inferring anything from visit history."""
+    return header_text.replace("{display_name}", user.display_name)
 
 
 async def show_client_menu(
@@ -66,9 +49,7 @@ async def show_client_menu(
         texts.MENU_HEADER,
     )
     base_header = normalize_menu_header_text(base_header)
-    header_text = await _build_greeting(
-        user, booking_repository=booking_repository, base_header=base_header
-    )
+    header_text = personalize_menu_header_text(base_header, user)
     button_configs = await load_client_main_menu_button_configs(settings_repository)
     contact_url = await load_master_contact_url(settings_repository)
     reply_markup = build_client_main_menu(

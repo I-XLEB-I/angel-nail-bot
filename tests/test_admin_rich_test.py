@@ -365,19 +365,35 @@ async def test_style_lab_previews_cover_advanced_rich_blocks(monkeypatch, tmp_pa
 
         assert "RichTextMarked" in str(previews["style_calm"].rich_message.blocks)
         assert "InputRichBlockFooter" in str(previews["style_calm"].rich_message.blocks)
-        assert "InputRichBlockPullQuotation" in str(
-            previews["style_editorial"].rich_message.blocks
-        )
+        assert "InputRichBlockPullQuotation" in str(previews["style_editorial"].rich_message.blocks)
         assert "RichTextItalic" in str(previews["style_editorial"].rich_message.blocks)
-        assert "InputRichBlockList" in str(
-            previews["style_functional"].rich_message.blocks
-        )
-        assert "InputRichBlockDetails" in str(
-            previews["style_functional"].rich_message.blocks
-        )
+        assert "InputRichBlockList" in str(previews["style_functional"].rich_message.blocks)
+        assert "InputRichBlockDetails" in str(previews["style_functional"].rich_message.blocks)
         assert "InputRichBlockBlockQuotation" in str(
             previews["style_functional"].rich_message.blocks
         )
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_loyalty_preview_contains_dynamic_image_and_sandbox_notice() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        for key in ("loyalty_stamps", "loyalty_card", "loyalty_minimal"):
+            definition = rich_messages_service.get_rich_preview_definition(key)
+            assert definition is not None
+
+            preview = await definition.builder(session, build_settings())
+
+            assert "InputRichBlockPhoto" in str(preview.rich_message.blocks)
+            assert "правила программы не будут утверждены" in str(preview.rich_message.blocks)
+            assert "Бонусы клиенткам не начисляются" in preview.standard_text
 
     await engine.dispose()
 

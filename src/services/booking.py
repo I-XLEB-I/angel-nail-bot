@@ -148,9 +148,7 @@ ACTIVE_SLOT_BOOKING_STATUSES = (
     BookingStatus.PENDING_MASTER,
     BookingStatus.CONFIRMED,
 )
-_BOOKING_TRANSITION_LOCKS: WeakKeyDictionary[AbstractEventLoop, asyncio.Lock] = (
-    WeakKeyDictionary()
-)
+_BOOKING_TRANSITION_LOCKS: WeakKeyDictionary[AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
 
 
 def _booking_transition_lock() -> asyncio.Lock:
@@ -178,9 +176,7 @@ async def _load_booking_service_selection(
     if require_active:
         base_conditions.append(Service.is_active.is_(True))
     base_service = await session.scalar(
-        select(Service)
-        .where(*base_conditions)
-        .execution_options(populate_existing=True)
+        select(Service).where(*base_conditions).execution_options(populate_existing=True)
     )
     if base_service is None:
         return None
@@ -198,9 +194,7 @@ async def _load_booking_service_selection(
     addons = list(
         (
             await session.scalars(
-                select(Service)
-                .where(*addon_conditions)
-                .execution_options(populate_existing=True)
+                select(Service).where(*addon_conditions).execution_options(populate_existing=True)
             )
         )
         .unique()
@@ -234,12 +228,7 @@ def build_service_pricing_signature(
     addons: list[Service],
 ) -> str:
     """Build a stable fingerprint for the prices shown at confirmation time."""
-    parts = [
-        (
-            f"base:{base_service.id}:{base_service.price}:"
-            f"{int(base_service.price_variable)}"
-        )
-    ]
+    parts = [(f"base:{base_service.id}:{base_service.price}:{int(base_service.price_variable)}")]
     parts.extend(
         f"addon:{service.id}:{service.price}:{int(service.price_variable)}"
         for service in sorted(addons, key=lambda item: item.id)
@@ -311,10 +300,7 @@ def booking_intervals_overlap(
     first_end = normalized_first_start + timedelta(minutes=max(first_duration_min, 1))
     normalized_second_start = _normalize_utc(second_start)
     normalized_second_end = _normalize_utc(second_end)
-    return (
-        normalized_first_start < normalized_second_end
-        and normalized_second_start < first_end
-    )
+    return normalized_first_start < normalized_second_end and normalized_second_start < first_end
 
 
 async def load_active_booking_intervals(
@@ -338,13 +324,7 @@ async def load_active_booking_intervals(
     if exclude_booking_id is not None:
         query = query.where(Booking.id != exclude_booking_id)
     bookings = list((await session.scalars(query)).unique().all())
-    addon_ids = list(
-        {
-            addon_id
-            for booking in bookings
-            for addon_id in list(booking.addons or [])
-        }
-    )
+    addon_ids = list({addon_id for booking in bookings for addon_id in list(booking.addons or [])})
     addon_map: dict[int, Service] = {}
     if addon_ids:
         addons = list(
@@ -365,9 +345,7 @@ async def load_active_booking_intervals(
         if booking.slot is None or booking.base_service is None:
             continue
         booking_addons = [
-            addon_map[addon_id]
-            for addon_id in list(booking.addons or [])
-            if addon_id in addon_map
+            addon_map[addon_id] for addon_id in list(booking.addons or []) if addon_id in addon_map
         ]
         duration_min = calculate_booking_duration(
             base_service=booking.base_service,
@@ -631,7 +609,11 @@ def build_services_caption_text() -> str:
 def build_addons_prompt_text(addons: list[Service], selected_ids: list[int]) -> str:
     """Render the add-on selection prompt."""
     selected_addons = [service.name for service in addons if service.id in selected_ids]
-    lines = ["💅 Дополнительные опции", "", "Ориентир по ценам — на картинке выше."]
+    lines = [
+        "💅 Дополнительные опции",
+        "",
+        "Можно выбрать несколько. Цена указана на каждой кнопке.",
+    ]
     if selected_addons:
         lines.append(f"Сейчас выбрано: {', '.join(selected_addons)}")
     else:
@@ -665,7 +647,7 @@ def build_booking_summary_text(
         addons=addons,
     )
     local_dt = format_local_datetime(slot.start_at, tz_name)
-    service_line = f"{base_service.name} — {base_service.price}₽"
+    service_line = f"{base_service.name} — {format_service_price(base_service)}"
 
     lines = [
         "✨ Проверим запись",
@@ -703,9 +685,7 @@ def build_booking_summary_text(
 
     lines.extend(["", "┣ 💵 Итого", f"┗ {fixed_price}₽{total_suffix}"])
     if has_variable_price or design_photo_count or design_comment:
-        lines.append(
-            ""
-        )
+        lines.append("")
         lines.append(
             "Если дизайн или детали окажутся нестандартными, Ангела уточнит стоимость на месте."
         )
@@ -1019,9 +999,7 @@ def build_my_bookings_overview_text(
         nearest_service = service_labels.get(nearest.id, nearest.base_service.name)
         if nearest.slot is not None:
             nearest_local = format_local_datetime(nearest.slot.start_at, tz_name)
-            nearest_duration = format_duration_approx(
-                nearest.base_service.duration_min
-            )
+            nearest_duration = format_duration_approx(nearest.base_service.duration_min)
             nearest_day = format_local_day_label(nearest_local.date())
             nearest_weekday = WEEKDAY_NAMES_NOMINATIVE[nearest_local.weekday()]
             lines.extend(
@@ -1174,30 +1152,18 @@ def build_admin_reschedule_text(
     service_label = build_booking_service_label(booking.base_service, addons)
 
     old_local_dt = (
-        format_local_datetime(old_slot.start_at, tz_name)
-        if old_slot is not None
-        else None
+        format_local_datetime(old_slot.start_at, tz_name) if old_slot is not None else None
     )
     new_local_dt = (
-        format_local_datetime(new_slot.start_at, tz_name)
-        if new_slot is not None
-        else None
+        format_local_datetime(new_slot.start_at, tz_name) if new_slot is not None else None
     )
 
     return texts.ADMIN_CLIENT_RESCHEDULED_TEXT.format(
         name=client.display_name,
         username=username,
-        old_date=(
-            format_local_day_label(old_local_dt.date())
-            if old_local_dt is not None
-            else "—"
-        ),
+        old_date=(format_local_day_label(old_local_dt.date()) if old_local_dt is not None else "—"),
         old_time=old_local_dt.strftime("%H:%M") if old_local_dt is not None else "—",
-        new_date=(
-            format_local_day_label(new_local_dt.date())
-            if new_local_dt is not None
-            else "—"
-        ),
+        new_date=(format_local_day_label(new_local_dt.date()) if new_local_dt is not None else "—"),
         new_time=new_local_dt.strftime("%H:%M") if new_local_dt is not None else "—",
         service=service_label,
     )
@@ -1433,9 +1399,7 @@ async def cancel_booking(
             released_slot=None,
         )
 
-    cancel_reason_text = (
-        ((reason_text or "").strip() or None) if reason_code == "other" else None
-    )
+    cancel_reason_text = ((reason_text or "").strip() or None) if reason_code == "other" else None
     transition = await session.execute(
         update(Booking)
         .where(
@@ -1554,9 +1518,7 @@ async def apply_booking_no_show(
             released_slot=None,
             strikes=booking.client.strikes if booking.client is not None else 0,
             requires_manual_approval=(
-                booking.client.requires_manual_approval
-                if booking.client is not None
-                else False
+                booking.client.requires_manual_approval if booking.client is not None else False
             ),
         )
 
@@ -1579,9 +1541,7 @@ async def apply_booking_no_show(
             released_slot=None,
             strikes=booking.client.strikes if booking.client is not None else 0,
             requires_manual_approval=(
-                booking.client.requires_manual_approval
-                if booking.client is not None
-                else False
+                booking.client.requires_manual_approval if booking.client is not None else False
             ),
         )
 
@@ -1599,9 +1559,7 @@ async def apply_booking_no_show(
         .execution_options(synchronize_session=False)
     )
     updated_risk = await session.execute(
-        select(User.strikes, User.requires_manual_approval).where(
-            User.id == booking.client_id
-        )
+        select(User.strikes, User.requires_manual_approval).where(User.id == booking.client_id)
     )
     strikes, requires_manual_approval = updated_risk.one()
 
